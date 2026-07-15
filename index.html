@@ -135,6 +135,15 @@
   .msg.ok{color:var(--leaf)} .msg.no{color:#ff8f7a}
 
   .tray{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;padding:6px;background:#1a1626;border:3px solid #4a4361}
+  .mcChoices{display:flex;gap:12px;justify-content:center;padding:6px 2px}
+  .mcBtn{flex:1;max-width:150px;min-height:82px;background:var(--parch);border:4px solid #000;
+    box-shadow:3px 3px 0 #000;font-size:40px;font-weight:800;color:#1b1726;font-family:inherit;
+    cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .mcBtn:active{transform:translateY(3px);box-shadow:1px 1px 0 #000}
+  .mcBtn.right{background:#7fe08a;border-color:#1f7a2e}
+  .mcBtn.wrong{background:#f0968a;border-color:#8a2b22}
+  .mcBtn:disabled{opacity:.7}
+  @media (max-width:520px){ .mcBtn{font-size:32px;min-height:64px} }
   .card{width:44px;height:58px;background:var(--parch);border:3px solid #000;box-shadow:2px 2px 0 #000;
     display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:700;color:#1b1726;
     cursor:grab;touch-action:none}
@@ -238,11 +247,17 @@
       <div class="msg" id="bMsg">제한 시간 안에 빈칸에 카드를 넣어라</div>
     </div>
     <div>
-      <div class="tray" id="tray"></div>
-      <div class="lbl" id="trayLbl"></div>
-      <div class="bbtns" style="margin-top:6px">
-        <button class="btn" id="btnClear">비우기</button>
-        <button class="btn" id="btnCheck" style="border-color:var(--gold);background:#4a3c17">확인</button>
+      <div id="cardMode">
+        <div class="tray" id="tray"></div>
+        <div class="lbl" id="trayLbl"></div>
+        <div class="bbtns" style="margin-top:6px">
+          <button class="btn" id="btnClear">비우기</button>
+          <button class="btn" id="btnCheck" style="border-color:var(--gold);background:#4a3c17">확인</button>
+        </div>
+      </div>
+      <div id="mcMode" style="display:none">
+        <div class="mcChoices" id="mcChoices"></div>
+        <div class="lbl" id="mcLbl">정답이라고 생각하는 숫자를 눌러라!</div>
       </div>
     </div>
   </div>
@@ -320,10 +335,12 @@ function loadImages(cb){
      5~6학년 : 13x7  격자 · 약 76개 방  (세 자리 수·곱셈   · 카드 1~3장)
    구조는 공통: 지상(십자형 줄기+4개 지역+상점+보물) → 다리 → 마왕성 복도  */
 const DIFF={
+  baby:  {key:'baby',   label:'왕초보', sub:'한 자리 수 · 3개 중 정답 고르기 · 하트 10개',
+          gw:9,  gh:5, ow:5, trunk:6,  area:4, castle:8,  maxSlots:1, ops:['+','-'], mc:true, hearts:10, rooms:'약 30개 방'},
   easy:  {key:'easy',   label:'초급', sub:'1~2학년 · 한 자리 수 덧셈·뺄셈 · 카드 1장',
-          gw:9,  gh:5, ow:5, trunk:8,  area:4, castle:12, maxSlots:1, ops:['+','-'], rooms:'약 38개 방'},
+          gw:9,  gh:5, ow:5, trunk:8,  area:4, castle:12, maxSlots:1, ops:['+','-'], hearts:5, rooms:'약 38개 방'},
   normal:{key:'normal', label:'고급', sub:'3~4학년 · 두 자리 수까지 · 카드 1~2장',
-          gw:11, gh:6, ow:6, trunk:12, area:5, castle:16, maxSlots:2, ops:['+','-'], rooms:'약 50개 방'},
+          gw:11, gh:6, ow:6, trunk:12, area:5, castle:16, maxSlots:2, ops:['+','-'], hearts:5, rooms:'약 50개 방'},
 };
 const OPP={U:'D',D:'U',L:'R',R:'L'};
 let MAP={}, ENTRY={}, MAPSTART='0,0', GW=9, GH=5, DIFFKEY='normal';
@@ -635,7 +652,8 @@ function rng(seed){let a=seed>>>0;return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.im
 let S=null;
 function newState(ch,df){
   return {char:ch||'chara_b', diff:df||'normal', seed:0, screen:'0,0', px:128, py:PY+88, dir:'D',
-    hearts:5, maxHearts:5, gold:0, bosses:{}, dead:{}, chests:{}, steps:0, wins:0, wrongs:0,
+    hearts:(DIFF[df||'normal']||{}).hearts||5, maxHearts:(DIFF[df||'normal']||{}).hearts||5,
+    gold:0, bosses:{}, dead:{}, chests:{}, steps:0, wins:0, wrongs:0,
     items:{sword:0, shield:0}, time:0};
 }
 /* ---- shop items (보유 제한 각 1개) ---- */
@@ -771,9 +789,31 @@ function canMove(nx,ny){
 
 /* ---------------- input ---------------- */
 const keys={};
+/* ---- 터치(탭)로 이동: 탭한 지점으로 걸어간다 (D패드/키와 병행) ---- */
+let tapTarget=null;
+function canvasToWorld(clientX, clientY){
+  const r=cv.getBoundingClientRect();
+  const x=(clientX-r.left)/r.width*W;
+  const y=(clientY-r.top)/r.height*H;
+  return {x,y};
+}
+function handleFieldTap(clientX, clientY){
+  if(!S || !scr || battle.on || paused) return;
+  const w=canvasToWorld(clientX, clientY);
+  if(w.y < PY+2) return;                 // 상단 HUD는 무시
+  if(w.y > PY+ROWS*TS) return;           // 하단 바는 무시
+  // 목표 지점이 벽이면 근처의 갈 수 있는 칸으로 살짝 당긴다
+  let tx=Math.max(8, Math.min(W-8, w.x));
+  let ty=Math.max(PY+8, Math.min(PY+ROWS*TS-8, w.y));
+  tapTarget={x:tx, y:ty, best:Infinity, stall:0};
+}
+cv.addEventListener('pointerdown', e=>{
+  if(e.pointerType==='mouse' && e.button!==0) return;
+  handleFieldTap(e.clientX, e.clientY);
+});
 addEventListener('keydown',e=>{
   const m={ArrowUp:'U',ArrowDown:'D',ArrowLeft:'L',ArrowRight:'R',w:'U',s:'D',a:'L',d:'R',W:'U',S:'D',A:'L',D:'R'};
-  if(m[e.key]){keys[m[e.key]]=1;e.preventDefault();}
+  if(m[e.key]){keys[m[e.key]]=1;e.preventDefault();tapTarget=null;}
   if(e.key==='z'||e.key==='Z'||e.key===' '){ actPress(); e.preventDefault(); }
   if((e.key==='m'||e.key==='M') && S && !battle.on){
     if(paused) document.getElementById('mapClose').click(); else openMap();
@@ -785,7 +825,7 @@ addEventListener('keyup',e=>{
 });
 document.querySelectorAll('#pad .k').forEach(k=>{
   const d=k.dataset.d;
-  const on=e=>{e.preventDefault();keys[d]=1;k.classList.add('on');};
+  const on=e=>{e.preventDefault();keys[d]=1;k.classList.add('on');tapTarget=null;};
   const off=e=>{e.preventDefault();keys[d]=0;k.classList.remove('on');};
   k.addEventListener('pointerdown',on); k.addEventListener('pointerup',off);
   k.addEventListener('pointercancel',off); k.addEventListener('pointerleave',off);
@@ -937,6 +977,14 @@ function drawShieldSprite(x,y){         // 7 x 9
   cx.fillStyle='#7fd6ff';  cx.fillRect(x+1,y+1,5,2);
   cx.fillStyle='#2f6f9c';  cx.fillRect(x+2,y+7,3,1);
   cx.fillStyle='#f2c14e';  cx.fillRect(x+3,y+3,1,2); cx.fillRect(x+2,y+4,3,1);
+}
+function drawTapMarker(){
+  if(!tapTarget) return;
+  const x=tapTarget.x, y=tapTarget.y, ph=(TICK%40)/40, r=3+ph*4, a=1-ph;
+  cx.strokeStyle='rgba(255,236,120,'+a.toFixed(2)+')'; cx.lineWidth=1;
+  cx.beginPath(); cx.arc(x,y,r,0,7); cx.stroke();
+  cx.fillStyle='rgba(255,236,120,.9)';
+  cx.fillRect(x-1,y-1,2,2);
 }
 function drawPlayer(){
   const im=IMG[S.char].w; if(!im.complete||!im.width) return;
@@ -1127,7 +1175,8 @@ function drawMapTo(g,cs,big){
 }
 const mini=document.getElementById('mini'), mcx=mini.getContext('2d');
 mcx.imageSmoothingEnabled=false;
-mini.addEventListener('click',()=>{ if(!battle.on && !paused) openMap(); });
+mini.addEventListener('pointerdown',e=>{ e.stopPropagation(); });
+mini.addEventListener('click',e=>{ e.stopPropagation(); if(!battle.on && !paused) openMap(); });
 function openMap(){
   paused=true;
   const b=document.getElementById('bigmap'), g=b.getContext('2d');
@@ -1151,11 +1200,28 @@ function update(){
   TICK++;
   if(battle.on || paused) return;
   const sp=1.35; let mx=0,my=0;
-  if(keys.U)my-=sp; if(keys.D)my+=sp; if(keys.L)mx-=sp; if(keys.R)mx+=sp;
-  if(mx&&my){mx*=0.72;my*=0.72;}
-  if(my<0)S.dir='U'; else if(my>0)S.dir='D'; else if(mx<0)S.dir='L'; else if(mx>0)S.dir='R';
-  if(mx&&canMove(S.px+mx,S.py)) S.px+=mx;
-  if(my&&canMove(S.px,S.py+my)) S.py+=my;
+  const usingKeys = keys.U||keys.D||keys.L||keys.R;
+  if(usingKeys){
+    if(keys.U)my-=sp; if(keys.D)my+=sp; if(keys.L)mx-=sp; if(keys.R)mx+=sp;
+    if(mx&&my){mx*=0.72;my*=0.72;}
+  } else if(tapTarget){
+    const dx=tapTarget.x-S.px, dy=tapTarget.y-S.py, dist=Math.hypot(dx,dy);
+    if(dist<3){ tapTarget=null; }        // 도착
+    else { const step=Math.min(sp,dist); mx=dx/dist*step; my=dy/dist*step; }
+  }
+  if(mx||my){
+    if(Math.abs(mx)>Math.abs(my)) S.dir = mx<0?'L':'R';
+    else S.dir = my<0?'U':'D';
+  }
+  const bx=canMove(S.px+mx,S.py), by=canMove(S.px,S.py+my);
+  if(mx&&bx) S.px+=mx;
+  if(my&&by) S.py+=my;
+  // 탭 이동 중 목표에 가까워지지 못하면(벽에 걸려 정체) 목표 취소
+  if(tapTarget && !usingKeys){
+    const nd=Math.hypot(tapTarget.x-S.px, tapTarget.y-S.py);
+    if(nd < tapTarget.best-0.4){ tapTarget.best=nd; tapTarget.stall=0; }
+    else if(++tapTarget.stall > 8){ tapTarget=null; }
+  }
   S.px=Math.max(6,Math.min(W-6,S.px)); S.py=Math.max(PY+6,Math.min(PY+ROWS*TS-6,S.py));
 
   // exit check (must be inside the arrow gap)
@@ -1203,7 +1269,7 @@ function tryExit(dir){
   gotoScreen(def.ex[dir], dir);
 }
 function gotoScreen(key,dir){
-  S.screen=key;
+  S.screen=key; tapTarget=null;
   scr=buildScreen(key);
   if(!battle.on) setBGM(scr.def.rg);
   // place player on opposite edge
@@ -1324,8 +1390,33 @@ function eqNormal(tier){
   }
   return eqEasy();
 }
+/* 왕초보(3지선다) 문제: 한 자리 수 덧셈·뺄셈, 빈칸 하나 + 보기 3개 */
+function genQMC(){
+  const op=pick(['+','-']);
+  let a,b,c;
+  if(op==='+'){ a=ri(1,8); b=ri(1,9-a); c=a+b; }
+  else { a=ri(2,9); b=ri(1,a); c=a-b; }
+  // 어느 자리를 물어볼지: 결과 c 또는 피연산자 b
+  const ask=pick(['c','b']);
+  let text, answer;
+  if(ask==='c'){ text=a+' '+op+' '+b+' = ?'; answer=c; }
+  else { text=a+' '+op+' ? = '+c; answer=b; }
+  // 보기: 정답 + 그럴듯한 오답 2개 (0~9 범위, 중복 없음)
+  const opts=new Set([answer]);
+  let guard=0;
+  while(opts.size<3 && guard++<40){
+    let d=answer + pick([-2,-1,1,2,3]);
+    if(d<0||d>9) d=ri(0,9);
+    opts.add(d);
+  }
+  while(opts.size<3){ opts.add(ri(0,9)); }
+  const choices=[...opts]; 
+  for(let i=choices.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));const t=choices[i];choices[i]=choices[j];choices[j]=t;}
+  return {mc:true, text, answer:String(answer), choices:choices.map(String)};
+}
 /* tier: 1=일반몹 2=지역보스/성몹 3=마왕부하 4=마왕 */
 function genQ(tier){
+  if(S && DIFF[S.diff] && DIFF[S.diff].mc) return genQMC();
   const dk=(S&&S.diff&&DIFF[S.diff])? S.diff : 'normal';
   const cap=DIFF[dk].maxSlots;
   for(let i=0;i<80;i++){
@@ -1364,7 +1455,11 @@ function startBattle(foe,isBoss){
   document.getElementById('foeSub').textContent='정답 '+battle.hits+'번이면 쓰러진다';
   showIntroLine();
   document.getElementById('foeHp').style.width='100%';
-  buildTray(); nextQuestion();
+  const isMC = !!(DIFF[S.diff]&&DIFF[S.diff].mc);
+  document.getElementById('cardMode').style.display = isMC?'none':'';
+  document.getElementById('mcMode').style.display   = isMC?'':'none';
+  if(!isMC) buildTray();
+  nextQuestion();
   drawBHearts();
   elB.classList.add('show');
 }
@@ -1459,6 +1554,7 @@ function stopQTimer(){ if(qTimer){ clearInterval(qTimer); qTimer=null; } }
 function nextQuestion(){
   const tier = battle.isBoss? battle.foe.def.tier : battle.foe.tier;
   battle.q=genQ(tier);
+  if(battle.q.mc){ nextQuestionMC(); return; }
   const eq=document.getElementById('eq'); eq.innerHTML=''; battle.slots=[];
   battle.q.tok.forEach((t,i)=>{
     if(t.t==='slot'){
@@ -1482,6 +1578,35 @@ function nextQuestion(){
   renderFoeExpr('idle');
   setLock(false);
   startQTimer();
+}
+function nextQuestionMC(){
+  const eq=document.getElementById('eq');
+  eq.innerHTML=''; battle.slots=[];
+  const d=document.createElement('div'); d.textContent=battle.q.text;
+  d.style.fontSize='clamp(28px,7vw,40px)'; eq.appendChild(d);
+  const box=document.getElementById('mcChoices'); box.innerHTML='';
+  battle.q.choices.forEach(v=>{
+    const b=document.createElement('button'); b.className='mcBtn'; b.textContent=v;
+    b.onclick=()=>pickMC(b, v);
+    box.appendChild(b);
+  });
+  setMsg((battle.isBoss?'보스전! ':'')+'정답을 골라라! ('+(battle.isBoss?QLIMIT_BOSS:QLIMIT_MOB)+'초)','');
+  document.getElementById('foe').classList.remove('smirk');
+  document.getElementById('foeLaugh').classList.remove('show');
+  renderFoeExpr('idle');
+  setLock(false);
+  startQTimer();
+}
+function pickMC(btn, v){
+  if(!battle.on || battle.lock) return;
+  if(v===battle.q.answer){
+    btn.classList.add('right'); setLock(true);
+    correct();
+  } else {
+    btn.classList.add('wrong'); btn.disabled=true;
+    tauntFoe();
+    wrong();
+  }
 }
 function setMsg(t,cls){ const m=document.getElementById('bMsg'); m.textContent=t; m.className='msg '+(cls||''); }
 function fillSlot(s,v,kind){
@@ -1572,6 +1697,7 @@ function updateFacePreview(){
 }
 function checkAnswer(){
   if(!battle.on || battle.lock) return;   // 채점 중에는 확인 연타 무시
+  if(battle.q && battle.q.mc) return;     // 3지선다는 보기 버튼으로만 판정
   const st=currentEq();
   if(!st.filled){ setMsg('빈칸을 모두 채워야 한다!','no'); return; }
   if(st.ok) correct(); else wrong();
@@ -1602,15 +1728,27 @@ function wrong(timeout){
   beep(180,.18);
   S.wrongs++;
   S.hearts--; drawBHearts();
-  battle.slots.forEach(s=>{s.classList.add('bad');setTimeout(()=>s.classList.remove('bad'),320);});
-  tauntFoe();                       // 몬스터가 살짝 비웃는다
-  const ans=battle.slots.map(s=>battle.q.tok[+s.dataset.i].ans).join(' ');
-  setMsg((timeout?'시간 초과! ':'틀렸다! ')+'하트 1개 상실.  (정답 예시: '+ans+')','no');
+  const isMC = !!(battle.q && battle.q.mc);
+  if(!isMC){
+    battle.slots.forEach(s=>{s.classList.add('bad');setTimeout(()=>s.classList.remove('bad'),320);});
+    tauntFoe();                     // 몬스터가 살짝 비웃는다
+    const ans=battle.slots.map(s=>battle.q.tok[+s.dataset.i].ans).join(' ');
+    setMsg((timeout?'시간 초과! ':'틀렸다! ')+'하트 1개 상실.  (정답 예시: '+ans+')','no');
+  } else {
+    setMsg((timeout?'시간 초과! ':'틀렸다! ')+'하트 1개 상실.  (정답은 '+battle.q.answer+')','no');
+  }
   if(S.hearts<=0){ setTimeout(gameOver,900); return; }
   setTimeout(()=>{
     if(!battle.on) return;
-    battle.slots.forEach(s=>{s.dataset.val='';s.textContent='?';s.classList.remove('filled');});
-    clearSel();
+    if(isMC){
+      // 보기 버튼 원상복구 후 재도전
+      document.querySelectorAll('#mcChoices .mcBtn').forEach(b=>{
+        b.classList.remove('right','wrong'); b.disabled=false;
+      });
+    } else {
+      battle.slots.forEach(s=>{s.dataset.val='';s.textContent='?';s.classList.remove('filled');});
+      clearSel();
+    }
     battle.smirk=false;
     document.getElementById('foe').classList.remove('smirk');
     setMsg('다시 도전! '+(battle.isBoss?QLIMIT_BOSS:QLIMIT_MOB)+'초.','');
@@ -1845,9 +1983,26 @@ document.getElementById('menuBtn').onclick=()=>{
 };
 document.getElementById('mResume').onclick=()=>{document.getElementById('menu').classList.remove('show');paused=false;};
 document.getElementById('mSave').onclick=()=>{save();toast('저장했다.',1200);};
-document.getElementById('mTitle').onclick=()=>{save();location.reload();};
+function closeAllVeils(){
+  ['end','menu','shop','mapview','battle'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.classList.remove('show');
+  });
+}
+function returnToTitle(){
+  // 진행 중이던 모든 상태를 확실히 정리하고 타이틀 화면으로 복귀 (페이지 리로드 없이)
+  battle.on=false; paused=true; ended=false; lastT=0; tapTarget=null;
+  stopQTimer(); stopBGM(); clearSel();
+  for(const k in keys) keys[k]=0;
+  closeAllVeils();
+  document.body.classList.remove('playing');
+  const hasSave = !!loadSave();
+  document.getElementById('btnCont').disabled = !hasSave;
+  buildDiffs(); buildPicks(); refreshBest(); showBest();
+  document.getElementById('title').classList.add('show');
+}
+document.getElementById('mTitle').onclick=()=>{ save(); returnToTitle(); };
 document.getElementById('mReset').onclick=()=>{
-  if(confirm('저장 데이터를 삭제할까요? (클리어 기록은 유지됩니다)')){ clearSave(); location.reload(); }
+  if(confirm('저장 데이터를 삭제할까요? (클리어 기록은 유지됩니다)')){ clearSave(); returnToTitle(); }
 };
 
 function gameOver(){
@@ -1881,7 +2036,7 @@ function ending(){
   });
   document.getElementById('end').classList.add('show');
 }
-document.getElementById('endBtn').onclick=()=>{ clearSave(); location.reload(); };  // 기록(RECKEY)은 유지
+document.getElementById('endBtn').onclick=()=>{ clearSave(); returnToTitle(); };  // 기록(RECKEY)은 유지, 페이지 리로드 없음
 document.getElementById('btnClear').onclick=()=>{
   battle.slots.forEach(s=>{s.dataset.val='';s.textContent='?';s.classList.remove('filled');});
   clearSel(); updateFacePreview();
@@ -1889,11 +2044,11 @@ document.getElementById('btnClear').onclick=()=>{
 document.getElementById('btnCheck').onclick=checkAnswer;
 
 /* ---------------- title ---------------- */
-let chosen='chara_b', chosenDiff='easy';
+let chosen='chara_b', chosenDiff='baby';
 try{ const d=localStorage.getItem('mathzelda_diff'); if(d && DIFF[d]) chosenDiff=d; }catch(e){}
 function buildDiffs(){
   const box=document.getElementById('diffs'); box.innerHTML='';
-  ['easy','normal'].forEach(k=>{
+  ['baby','easy','normal'].forEach(k=>{
     const D=DIFF[k];
     const d=document.createElement('div');
     d.className='diff'+(k===chosenDiff?' sel':'');
@@ -1961,12 +2116,13 @@ addEventListener('resize',fit);
 /* ---------------- loop ---------------- */
 let lastT=0;
 function loop(t){
-  if(S && scr){
+  const onTitle=document.getElementById('title').classList.contains('show');
+  if(S && scr && !onTitle){
     const dt = lastT ? Math.min(0.1,(t-lastT)/1000) : 0;
     if(!paused && !ended) S.time += dt;   // 전투 중에도 시계는 흐른다
     update();
     cx.fillStyle='#000'; cx.fillRect(0,0,W,H);
-    drawTiles(); drawArrows(); drawEntities(); drawPlayer(); drawHUD(); drawBottom();
+    drawTiles(); drawArrows(); drawTapMarker(); drawEntities(); drawPlayer(); drawHUD(); drawBottom();
     drawMapTo(mcx,MC,false);
   }
   lastT=t;
