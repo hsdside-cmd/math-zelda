@@ -178,6 +178,25 @@
   .cslot .lock{font-size:34px;color:#6b6b72}
   .cslot.quake{animation:quake .4s}
   @keyframes quake{0%,100%{transform:translateX(0)}20%{transform:translateX(-9px)}40%{transform:translateX(8px)}60%{transform:translateX(-6px)}80%{transform:translateX(5px)}}
+  /* 함정 칸 — 화면 흔들림과 붉은 경고 */
+  @keyframes trapQ{0%,100%{transform:translate(0,0)}
+    10%{transform:translate(-7px,3px)}20%{transform:translate(6px,-4px)}
+    30%{transform:translate(-6px,-3px)}40%{transform:translate(5px,4px)}
+    55%{transform:translate(-4px,2px)}70%{transform:translate(3px,-2px)}
+    85%{transform:translate(-2px,1px)}}
+  .trapQuake{animation:trapQ .6s ease-out}
+  #trapAlert{position:fixed;left:50%;top:34%;transform:translate(-50%,-50%) scale(.7);
+    z-index:60;pointer-events:none;opacity:0;text-align:center;
+    font-family:inherit;text-shadow:0 0 10px #ff2a2a,3px 3px 0 #000}
+  #trapAlert span{display:block;font-size:clamp(26px,8vw,46px);font-weight:900;color:#ff3a3a;letter-spacing:3px}
+  #trapAlert b{display:block;margin-top:6px;font-size:clamp(15px,4.4vw,22px);color:#ffd6d6}
+  #trapAlert.on{animation:trapAl 1.8s ease-out forwards}
+  @keyframes trapAl{
+    0%{opacity:0;transform:translate(-50%,-50%) scale(.6)}
+    12%{opacity:1;transform:translate(-50%,-50%) scale(1.12)}
+    20%{transform:translate(-50%,-50%) scale(1)}
+    30%{opacity:.35}40%{opacity:1}50%{opacity:.4}60%{opacity:1}
+    100%{opacity:0;transform:translate(-50%,-50%) scale(1.05)}}
   /* 저장 슬롯 */
   .slots{display:flex;flex-direction:column;gap:10px;margin:14px 0}
   .slot-row{border:3px solid #4a4361;background:#1d1929;border-radius:8px;padding:12px 14px;
@@ -825,11 +844,14 @@ function loadImages(cb){
 
 /* ==================== [MAPGEN] 난이도 · 맵 생성기 ====================
    매 판 랜덤 · 시드 고정
-   난이도는 둘뿐이다.
-     초급(easy)   : 3지선다   · 격자 11x5 · 약 38개 방
-     고급(normal) : 카드 배치 · 격자 13x6 · 약 50개 방
+   난이도는 셋이다.
+     왕초보(baby)  : 한 자리 +,- 만 · 3지선다 · 하트 10 · 시간제한 없음
+     초급(easy)    : 3지선다   · 격자 11x5 · 약 38개 방
+     고급(normal)  : 카드 배치 · 격자 13x6 · 약 50개 방
    구조는 공통: 지상(십자형 줄기+4개 지역+상점+보물) → 다리 → 마왕성 복도  */
 const DIFF={
+  baby:  {key:'baby',   label:'왕초보', sub:'한 자리 수 더하기·빼기만 · 3개 중 정답 고르기 · 하트 10개',
+          gw:11, gh:5, ow:5, trunk:6,  area:3, castle:0, hubN:3, secMin:2, secMax:2, lordMin:2, lordMax:3, maxSlots:1, ops:['+','-'], mc:true, baby:1, hearts:10, rooms:'약 32개 방'},
   easy:  {key:'easy',   label:'초급', sub:'문제를 보고 3개 중 정답 고르기 (3지선다)',
           gw:11, gh:5, ow:5, trunk:7,  area:3, castle:0, hubN:3, secMin:2, secMax:3, lordMin:2, lordMax:3, maxSlots:1, ops:['+','-'], mc:true, hearts:5, rooms:'약 38개 방'},
   normal:{key:'normal', label:'고급', sub:'숫자 카드를 골라 빈칸 채우기',
@@ -920,10 +942,17 @@ function gen3x3(seed, D, run){
     const sk1=K(ec, rows[0]-1);
     if(!M[sk1] && rows[0]-1>=0){ M[sk1]={ex:{}, rg:'shop', shop:1};
       M[K(ec,rows[0])].ex.U=sk1; M[sk1].ex.D=K(ec,rows[0]); }
-    const f=nodes[nodes.length-1].entry.split(','), fc=+f[0];
-    const sk2=K(fc, rows[1]-1);
-    if(!M[sk2]){ M[sk2]={ex:{}, rg:'shop', shop:1};
-      M[K(fc,rows[1])].ex.U=sk2; M[sk2].ex.D=K(fc,rows[1]); }
+    /* 두 번째 상점은 '최종 스테이지 직전' 마디에 붙인다.
+       마지막 노드(왕의 집무실)에 붙이면 왕을 지나야만 상점에 닿는다. */
+    for(let ni=nodes.length-2; ni>=1; ni--){
+      const f=nodes[ni].exit.split(','), fc=+f[0], fr=+f[1];
+      const sk2=K(fc, fr-1);
+      if(!M[sk2] && fr-1>=0){
+        M[sk2]={ex:{}, rg:'shop', shop:1};
+        M[nodes[ni].exit].ex.U=sk2; M[sk2].ex.D=nodes[ni].exit;
+        break;
+      }
+    }
   })();
   M[nodes[0].entry].start=1;
   MAPSTART=nodes[0].entry; AREA_BOSSES=[];
@@ -997,12 +1026,13 @@ function genCat(seed, D, run){
   M[K(X0-2,br)]={ex:{}, rg:'dogcastle', boss:'dogking'};
   link(K(X0-2,br), K(X0-1,br), 'R');
 
-  /* 상점 둘 — 시작 옆, 그리고 다리 앞(최종보스 직전) */
+  /* 상점 둘 — 시작 옆, 그리고 다리 '건너기 전'(마을 쪽).
+     다리 너머는 최종보스 구역이라, 상점을 그쪽에 두면 보스를 지나야 닿게 된다. */
   M[K(sc+1,0)]={ex:{}, rg:'shop', shop:1};
   link(K(sc,0), K(sc+1,0), 'R');
-  const sr = (br-1>=1) ? br-1 : br+1;
+  const sr = (br-1>=1) ? br-1 : br+1;          // 다리와 맞닿은 마을 칸의 위/아래
   M[K(X0-1,sr)]={ex:{}, rg:'shop', shop:1};
-  link(K(X0-1,br), K(X0-1,sr), (br-1>=1)?'U':'D');
+  link(K(X0,sr), K(X0-1,sr), 'L');             // 게이트 앞쪽(마을)에서 들어간다
 
   MAPSTART=K(sc,0); AREA_BOSSES=bossIds.slice();
   return M;
@@ -1071,10 +1101,23 @@ function genRobot(seed, D, run){
   const far=order[order.length-1], bossKey=cellKey(far[0],far[1]);
   M[bossKey].boss='scientist';
   const OFF={U:[0,-1],D:[0,1],L:[-1,0],R:[1,0]};
-  /* 과학자 방(막히면 직전 경로 순서로) 옆 빈 좌표에 상점 부착 */
+  /* 상점은 과학자 방을 '지나지 않고' 닿을 수 있는 방에만 붙인다.
+     미로라서 순서만으로는 판단할 수 없어, 보스방을 막고 실제로 탐색해 본다. */
   (function(){
+    const start=ent;
+    const okRooms={}; const st=[start]; okRooms[start]=1;
+    while(st.length){
+      const k=st.pop();
+      if(k===bossKey) continue;               // 보스방은 통과하지 않는다
+      for(const d in M[k].ex){
+        const t=M[k].ex[d];
+        if(!okRooms[t]){ okRooms[t]=1; st.push(t); }
+      }
+    }
+    /* 입구에서 먼 방부터(보스 가까운 쪽부터) 훑되, 보스방 자신은 건너뛴다 */
     for(let oi=order.length-1; oi>=0; oi--){
       const ck=cellKey(order[oi][0], order[oi][1]);
+      if(ck===bossKey || !okRooms[ck]) continue;
       const cp=ck.split(','), cc=+cp[0], cr=+cp[1];
       for(const d in OFF){
         if(M[ck].ex[d]) continue;
@@ -1369,6 +1412,34 @@ function genStoryMap(rooms, D, shape){
   return M;
 }
 
+/* ==================== [TRAP] 함정 칸 ====================
+   경쟁 모드에서만, 매 판 두 방을 몰래 함정으로 정한다.
+   · 미니맵에는 표시되지 않는다(지역 색·기호를 그대로 둔다)
+   · 들어가면 약한 몹 12마리가 쏟아진다(1문제만 맞히면 쓰러짐, 속도는 절반)
+   · 보스방·상점·다리·시작방에는 만들지 않는다
+   · 한 번 겪은 방은 풀린다(나갔다 오면 평범한 방)
+   ======================================================================= */
+const TRAP_COUNT = 2;
+const TRAP_MOBS  = 12;
+function assignTraps(M){
+  try{
+    if(!M) return M;
+    if(!(typeof S!=='undefined' && S && S.mode==='race')) return M;   // 경쟁 모드만
+    const cand=[];
+    for(const k in M){
+      const d=M[k];
+      if(!d || d.boss || d.shop || d.start || d.tut || d.chest) continue;
+      if(k===MAPSTART) continue;
+      const rg=d.rg||'';
+      if(rg==='bridge'||rg==='dogbridge'||rg==='timegate'||rg==='shop') continue;
+      if(d.gate) continue;                       // 잠긴 문이 걸린 길목도 제외
+      cand.push(k);
+    }
+    for(let i=cand.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); const t=cand[i]; cand[i]=cand[j]; cand[j]=t; }
+    for(let i=0;i<Math.min(TRAP_COUNT,cand.length);i++) M[cand[i]].trap=1;
+  }catch(e){}
+  return M;
+}
 function generateMap(seed, dk){
   if(dk) DIFFKEY=dk;
   if(typeof clearCityCache==='function') clearCityCache();
@@ -1377,21 +1448,21 @@ function generateMap(seed, dk){
     MAP=genStoryMap(STORY_MAPS[S.chap], D, STORY_SHAPE[S.chap]); computeEntry(); sizeMini(); return MAP;
   }
   const _run=(typeof S!=='undefined' && S && S.run)?CHAR_RUN[S.run]:null;
-  if(_run && _run.shape==='linear'){ MAP=genLinear((seed>>>0), D, _run); computeEntry(); sizeMini(); return MAP; }
-  if(_run && _run.shape==='stages'){ MAP=gen3x3((seed>>>0), D, _run); computeEntry(); sizeMini(); return MAP; }
-  if(_run && _run.shape==='mansion'){ MAP=genMansion((seed>>>0), D, _run); computeEntry(); sizeMini(); return MAP; }
-  if(_run && _run.shape==='robot'){ MAP=genRobot((seed>>>0), D, _run); computeEntry(); sizeMini(); return MAP; }
-  if(_run && _run.shape==='cat'){ MAP=genCat((seed>>>0), D, _run); computeEntry(); sizeMini(); return MAP; }
+  if(_run && _run.shape==='linear'){ MAP=assignTraps(genLinear((seed>>>0), D, _run)); computeEntry(); sizeMini(); return MAP; }
+  if(_run && _run.shape==='stages'){ MAP=assignTraps(gen3x3((seed>>>0), D, _run)); computeEntry(); sizeMini(); return MAP; }
+  if(_run && _run.shape==='mansion'){ MAP=assignTraps(genMansion((seed>>>0), D, _run)); computeEntry(); sizeMini(); return MAP; }
+  if(_run && _run.shape==='robot'){ MAP=assignTraps(genRobot((seed>>>0), D, _run)); computeEntry(); sizeMini(); return MAP; }
+  if(_run && _run.shape==='cat'){ MAP=assignTraps(genCat((seed>>>0), D, _run)); computeEntry(); sizeMini(); return MAP; }
   for(let att=0; att<1500; att++){
     const M=tryGen((seed>>>0) + att*7919, D);
-    if(M){ catcatRemap(M); MAP=M; computeEntry(); sizeMini(); return M; }
+    if(M){ catcatRemap(M); MAP=M; assignTraps(M); computeEntry(); sizeMini(); return M; }
   }
   // 안전 폴백: 고정 시드들을 순회하며 반드시 유효한 맵을 만든다
   for(let fb=1; fb<400; fb++){
     const M=tryGen(fb*104729, D);
-    if(M){ catcatRemap(M); MAP=M; computeEntry(); sizeMini(); return M; }
+    if(M){ catcatRemap(M); MAP=M; assignTraps(M); computeEntry(); sizeMini(); return M; }
   }
-  MAP=tryGen(1, DIFF.normal)||{}; catcatRemap(MAP); computeEntry(); sizeMini(); return MAP;
+  MAP=tryGen(1, DIFF.normal)||{}; catcatRemap(MAP); assignTraps(MAP); computeEntry(); sizeMini(); return MAP;
 }
 function tryGen(seed, D){
   const R=rng(seed>>>0);
@@ -2918,9 +2989,11 @@ function buildScreen(key,entry){
   // mobs
   const mobs=[];
   const noMobHere = def.tut || key===MAPSTART;   // 튜토리얼 방 · 시작 방엔 몹 없음
+  const isTrap = !!def.trap && !noMobHere;       // 함정 칸: 약한 몹이 떼로 나온다
   if(!def.shop && def.rg!=='bridge' && def.rg!=='timegate' && def.rg!=='dogbridge' && !noMobHere){
     let n = def.boss?0 : (def.rg==='castle'?3 : def.rg==='field'?2:3);
     if(def.chest) n=2;
+    if(isTrap) n=TRAP_MOBS;                      // 12마리
     const doors=[...(ENTRY[key]||[])].map(d=>ENTRY_POS[d]);
     const nearDoor=(x,y)=>doors.some(p=>Math.hypot(x-p.x,y-p.y)<SAFE_R);
     const spots=[];
@@ -2928,7 +3001,7 @@ function buildScreen(key,entry){
       if(solid[tx+','+ty]) continue;
       const x=tx*TS+8, y=PY+ty*TS+8;
       if(nearDoor(x,y)) continue;                       // 입구 근처 제외
-      if(Math.abs(tx-7)+Math.abs(ty-5)<3) continue;     // 방 한가운데(보스/상자/상점) 제외
+      if(Math.abs(tx-7)+Math.abs(ty-5)<3 && !isTrap) continue;  // 방 한가운데 제외(함정은 예외)
       spots.push({tx,ty,x,y});
     }
     // 입구에서 먼 칸을 우선하되, 약간의 무작위성을 준다
@@ -2937,7 +3010,7 @@ function buildScreen(key,entry){
       const db=Math.min(...doors.map(p=>Math.hypot(b.x-p.x,b.y-p.y)), 999);
       return db-da;
     });
-    const pool=spots.slice(0, Math.max(n, Math.ceil(spots.length*0.75)));
+    const pool=isTrap ? spots.slice() : spots.slice(0, Math.max(n, Math.ceil(spots.length*0.75)));
     for(let i=0;i<n;i++){
       if(!pool.length) break;
       const idx=Math.floor(R()*pool.length);
@@ -2945,10 +3018,11 @@ function buildScreen(key,entry){
       const tx=sp.tx, ty=sp.ty;
       const mobPool=REGION_MOBS[def.rg]||MOBKIND;
       const kind=mobPool[Math.floor(R()*mobPool.length)];
+      const sp2=isTrap?.175:.35;                 // 함정 몹은 절반 속도
       mobs.push({i,x:tx*TS+8,y:PY+ty*TS+8,kind,rg:def.rg,
-        tier: def.rg==='castle'?2:1, hits:2,
+        tier: def.rg==='castle'?2:1, hits: isTrap?1:2, trap: isTrap?1:0,
         name: mobName(def.rg,kind),
-        vx:(R()<.5?-1:1)*.35, vy:(R()<.5?-1:1)*.35, t:R()*100});
+        vx:(R()<.5?-1:1)*sp2, vy:(R()<.5?-1:1)*sp2, t:R()*100});
     }
   }
   for(let k=mobs.length-1;k>=0;k--) if(S.dead[key+':'+mobs[k].i]) mobs.splice(k,1);
@@ -3978,6 +4052,97 @@ function drawObstacle(x,y,rg){
     cx.fillStyle='#6b4f31'; cx.fillRect(x+1,y+2,14,13);
     cx.fillStyle='#c9a66b'; cx.fillRect(x+2,y+4,12,2); cx.fillRect(x+2,y+9,12,2);
   } else { cx.fillStyle='#555'; cx.fillRect(x+2,y+2,12,12); }
+}
+/* ==================== [GUIDE] 병아리 길안내 (초급 전용) ====================
+   아직 잡지 않은 중간보스 중 '가장 가까운' 방까지 최단 경로를 구해,
+   그 첫 걸음에 해당하는 출구에 병아리를 세운다.
+   길이 여러 갈래여도 병아리는 늘 최단 경로 쪽만 가리킨다.
+   ========================================================================= */
+function guideOn(){
+  return S && (S.diff==='baby' || S.diff==='easy') && !isStory() ? true : false;   // 왕초보·초급에서만
+}
+/* 지금 방에서 미처치 중간보스 방까지, 최단 경로의 첫 방향을 돌려준다 (없으면 null) */
+function guideDir(){
+  if(!guideOn() || !scr || !scr.key || !MAP) return null;
+  const targets={};
+  let any=false;
+  for(const k in MAP){
+    const b=MAP[k].boss;
+    if(b && AREA_BOSSES.indexOf(b)>=0 && !S.bosses[b]){ targets[k]=1; any=true; }
+  }
+  if(!any) return null;                        // 중간보스를 다 잡았으면 안내하지 않는다
+  if(targets[scr.key]) return null;            // 이미 보스방 안이면 안내하지 않는다
+  /* 너비 우선 탐색: 첫 걸음 방향을 함께 들고 다닌다 */
+  const seen={}; seen[scr.key]=1;
+  let frontier=[];
+  for(const d in (MAP[scr.key]||{}).ex||{}){
+    if(gateLocked(MAP[scr.key], d)) continue;  // 잠긴 문으로는 안내하지 않는다
+    const nk=MAP[scr.key].ex[d];
+    if(!MAP[nk] || seen[nk]) continue;
+    seen[nk]=1;
+    if(targets[nk]) return d;                  // 바로 옆이 보스방
+    frontier.push({k:nk, first:d});
+  }
+  let guard=0;
+  while(frontier.length && guard++<400){
+    const next=[];
+    for(const cur of frontier){
+      const def=MAP[cur.k];
+      for(const d in def.ex||{}){
+        if(gateLocked(def, d)) continue;
+        const nk=def.ex[d];
+        if(!MAP[nk] || seen[nk]) continue;
+        seen[nk]=1;
+        if(targets[nk]) return cur.first;      // 최단 경로 확정
+        next.push({k:nk, first:cur.first});
+      }
+    }
+    frontier=next;
+  }
+  return null;
+}
+/* 병아리 요정 — 8x8 도트를 2배로. 말풍선은 위쪽에 */
+function drawChick(x, y, bob){
+  const P='#f2d23a', D='#c9a318', B='#2a2010', O='#f0902e';
+  const px=(cxp,cyp,w,h,col)=>{ cx.fillStyle=col; cx.fillRect(x+cxp, y+cyp+bob, w, h); };
+  px(-6,-7,12,13,B);                 // 검은 테두리
+  px(-5,-6,10,11,P);                 // 몸통
+  px(-5,-6,10,4,'#f8e582');          // 머리 하이라이트
+  px(-4,-3,3,3,B); px(-4,-3,1,1,'#fff');   // 왼눈 (좌상단 하이라이트)
+  px(1,-3,3,3,B);  px(1,-3,1,1,'#fff');    // 오른눈
+  px(-1,2,3,2,O); px(0,3,1,1,'#c86a1e');   // 부리
+  px(-5,3,1,3,D); px(4,3,1,3,D);     // 날개
+  px(-4,6,3,1,O); px(1,6,3,1,O);     // 발
+}
+/* "이쪽이야!" 말풍선 */
+function drawChickBubble(x, y, bob){
+  const t='이쪽이야!';
+  cx.font='bold 8px system-ui, sans-serif';
+  const tw=cx.measureText(t).width;
+  const bw=tw+8, bh=12;
+  let bx=x-bw/2, by=y-21+bob;
+  bx=Math.max(2, Math.min(W-bw-2, bx));       // 화면 밖으로 새지 않게
+  cx.fillStyle='#000'; cx.fillRect(bx-1,by-1,bw+2,bh+2);
+  cx.fillStyle='#fffdf2'; cx.fillRect(bx,by,bw,bh);
+  cx.fillStyle='#000';
+  cx.fillRect(x-2, by+bh, 4, 2); cx.fillRect(x-1, by+bh+2, 2, 1);
+  cx.fillStyle='#fffdf2';
+  cx.fillRect(x-1, by+bh, 2, 2);
+  cx.fillStyle='#2a2010'; cx.textAlign='center'; cx.textBaseline='middle';
+  cx.fillText(t, bx+bw/2, by+bh/2+0.5);
+  cx.textAlign='start'; cx.textBaseline='alphabetic';
+}
+/* 화살표 옆(방 안쪽)에 병아리를 세운다 */
+function drawGuide(){
+  const dir=guideDir(); if(!dir) return;
+  const bob=Math.sin(TICK/9)*1.5;
+  let x,y;
+  if(dir==='U'){ x=128;        y=PY+30; }
+  if(dir==='D'){ x=128;        y=PY+ROWS*TS-30; }
+  if(dir==='L'){ x=30;         y=PY+88; }
+  if(dir==='R'){ x=W-30;       y=PY+88; }
+  drawChick(x,y,bob);
+  drawChickBubble(x,y,bob);
 }
 function drawArrows(){
   const def=scr.def, pulse=Math.sin(TICK/14)*1.6;
@@ -5842,10 +6007,34 @@ function tryExit(dir){
   }
   gotoScreen(def.ex[dir], dir);
 }
+/* 함정 칸 진입 연출 — 화면 흔들림 + ALERT 경고 */
+function trapAlertFX(){
+  const wrap=$('stage')||$('game')||document.body;
+  try{ wrap.classList.remove('trapQuake'); void wrap.offsetWidth; wrap.classList.add('trapQuake');
+       setTimeout(()=>wrap.classList.remove('trapQuake'), 620); }catch(e){}
+  let el=$('trapAlert');
+  if(!el){
+    el=document.createElement('div'); el.id='trapAlert';
+    el.innerHTML='<span>⚠ ALERT ⚠</span><b>함정이다!</b>';
+    (document.body).appendChild(el);
+  }
+  el.classList.remove('on'); void el.offsetWidth; el.classList.add('on');
+  setTimeout(()=>el.classList.remove('on'), 1800);
+  try{
+    beep(180,.10); setTimeout(()=>beep(150,.12),120); setTimeout(()=>beep(180,.10),260);
+    setTimeout(()=>beep(120,.18),400);
+  }catch(e){}
+}
 function timeWarpFX(){ const f=$('warpFlash'); if(!f) return; f.classList.add('on'); setTimeout(()=>f.classList.remove('on'),90);
   try{ beep(1320,.07); setTimeout(()=>beep(880,.09),70); setTimeout(()=>beep(1760,.06),150); }catch(e){} }
 function gotoScreen(key,dir){
   const prevRg = scr && scr.def && scr.def.rg;
+  const prevKey = scr && scr.key;
+  /* 함정 칸을 빠져나가면 그 방은 평범한 방으로 돌아간다 */
+  if(prevKey && MAP[prevKey] && MAP[prevKey].trap && prevKey!==key){
+    delete MAP[prevKey].trap;
+    for(const kk in S.dead){ if(kk.indexOf(prevKey+':')===0) delete S.dead[kk]; }
+  }
   S.screen=key; tapTarget=null;
   scr=buildScreen(key);
   if(!battle.on) setBGM(scr.def.rg);
@@ -5871,7 +6060,8 @@ function gotoScreen(key,dir){
   });
   S.steps++;
   const nm=rgLabel(scr.def);
-  if(scr.def.boss && !S.bosses[scr.def.boss]){
+  if(scr.def.trap){ try{ trapAlertFX(); }catch(e){} }
+  else if(scr.def.boss && !S.bosses[scr.def.boss]){
     const _sk=bossSkin(scr.def.boss);
     if(_sk && _sk.still) toast('🔒 '+_sk.name+' 발견!',1600);
     else if(bossStill(scr.def.boss))
@@ -6134,6 +6324,7 @@ function setSubject(v){
 /* 이번 판에서 다룰 글자 범위 — 난이도로 조절한다 */
 function engPool(){
   const d=(S&&S.diff)||'normal';
+  if(d==='baby')  return ABC.slice(0,6);     // 왕초보: A~F
   if(d==='easy')  return ABC.slice(0,10);    // 초급: A~J
   if(d==='tut'||d==='vtut') return ABC.slice(0,6);
   return ABC;                                // 고급·그 외: A~Z 전체
@@ -6180,10 +6371,12 @@ function genQEngCard(){
 }
 
 function genQ(tier){
+  const D=DIFF[S.diff]||{};
   if(engSubjectOn()){                                  // 영어 모드
-    const mcE = !!(DIFF[S.diff] && DIFF[S.diff].mc);
-    return mcE ? genQEngMC() : genQEngCard();
+    return D.mc ? genQEngMC() : genQEngCard();
   }
+  /* 왕초보: 어떤 캐릭터든(곱셈·10배 담당이라도) 한 자리 더하기·빼기 3지선다만 낸다 */
+  if(D.baby) return partsToMC(genAddSub('addsub1'));
   const mode = mathModeNow();
   const mc = !!(DIFF[S.diff] && DIFF[S.diff].mc);
   if(mode==='mul') return mc ? genQMulMC() : genQMul();
@@ -10766,7 +10959,7 @@ $('btnChapRestart').onclick=()=>{
 
 function buildDiffs(){
   const box=$('diffs'); box.innerHTML='';
-  ['easy','normal'].forEach(k=>{
+  ['baby','easy','normal'].forEach(k=>{
     const D=DIFF[k];
     const d=document.createElement('div');
     d.className='diff'+(k===chosenDiff?' sel':'');
@@ -11162,7 +11355,7 @@ function loop(t){
     cx.setTransform(RS,0,0,RS,0,0); noSmooth(cx);   // 논리 256좌표를 512백버퍼에 2배로 렌더
     cx.fillStyle='#000'; cx.fillRect(0,0,W,H);
     try{ actorUpdate(); }catch(e){}
-    drawTiles(); drawArrows(); drawTapMarker(); try{ devWarpDraw(); }catch(e){} drawEntities(); actorDraw(); drawParty(); drawPlayer(); drawHUD(); drawBottom();
+    drawTiles(); drawArrows(); try{ drawGuide(); }catch(e){} drawTapMarker(); try{ devWarpDraw(); }catch(e){} drawEntities(); actorDraw(); drawParty(); drawPlayer(); drawHUD(); drawBottom();
     drawMapTo(mcx,MC,false);
   }
   if($('shop').classList.contains('show')){ drawAvatarPreview();
