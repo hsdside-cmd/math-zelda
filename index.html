@@ -142,6 +142,11 @@
     box-shadow:2px 2px 0 #000;line-height:1;white-space:nowrap}
   #subjSwitch:active{transform:translate(2px,2px);box-shadow:none}
   #subjSwitch.eng{background:#1e3a4a;border-color:#5ad0e0;color:#bdf0ff}
+  #dexBtn{position:absolute;top:46px;right:10px;z-index:5;padding:7px 12px;
+    background:#2c3a2e;border:3px solid #7fc95a;color:#dff5cf;
+    font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;
+    box-shadow:2px 2px 0 #000;line-height:1;white-space:nowrap}
+  #dexBtn:active{transform:translate(2px,2px);box-shadow:none}
   .panel h2{font-size:15px;margin:0 0 12px;color:#cbb;text-align:center;font-weight:400;line-height:1.3}
   .btn{display:block;width:100%;margin:8px 0;padding:14px;background:#332c47;border:3px solid var(--gold2);
     color:var(--parch);font-size:17px;font-family:inherit;cursor:pointer;}
@@ -588,6 +593,7 @@
 
   <div class="panel" id="titleMode" style="position:relative">
     <button id="subjSwitch" title="수학 / 영어 전환">🔢 수학</button>
+    <button id="dexBtn" title="몬스터 도감">📖 도감</button>
     <h1 id="titleH1">C.A.R.D. 게임으로<br>즐거운 연산학습</h1>
     <h2 id="titleH2">더하고 뺀다 · 크다 작다 · 숫자 카드 겨루기</h2>
     <div class="modeWrap">
@@ -619,8 +625,8 @@
   </div>
 
   <div class="panel" id="titleHome">
-    <h1>C.A.R.D. 게임으로<br>즐거운 연산학습</h1>
-    <h2>더하고 뺀다 · 크다 작다 · 숫자 카드 겨루기</h2>
+    <h1 id="homeH1">C.A.R.D. 게임으로<br>즐거운 연산학습</h1>
+    <h2 id="homeH2">더하고 뺀다 · 크다 작다 · 숫자 카드 겨루기</h2>
     <div class="lbl" style="text-align:left;margin-top:10px">이름 (순위표에 표시됩니다)</div>
     <input id="nameInput" type="text" maxlength="12" placeholder="이름을 입력하세요" autocomplete="off">
     <button class="btn" id="btnNew">새 게임</button>
@@ -1412,15 +1418,17 @@ function genStoryMap(rooms, D, shape){
   return M;
 }
 
-/* ==================== [TRAP] 함정 칸 ====================
-   경쟁 모드에서만, 매 판 두 방을 몰래 함정으로 정한다.
-   · 미니맵에는 표시되지 않는다(지역 색·기호를 그대로 둔다)
-   · 들어가면 약한 몹 12마리가 쏟아진다(1문제만 맞히면 쓰러짐, 속도는 절반)
-   · 보스방·상점·다리·시작방에는 만들지 않는다
-   · 한 번 겪은 방은 풀린다(나갔다 오면 평범한 방)
+/* ==================== [EVENT] 특별한 방 ====================
+   경쟁 모드에서만, 매 판 몇 개의 방에 '사건'을 심는다. 미니맵에는 보이지 않는다.
+     trap   : 함정  — 약한 몹 12마리(1문제로 격파, 속도 절반)
+     spring : 샘터  — 병아리 요정. 문제 1개를 맞히면 하트를 채워 준다
+     dare   : 도전방 — 연속 3문제를 맞히면 골드 벼락
+   보스방·상점·다리·시작방에는 만들지 않는다. 한 번 겪은 방은 평범해진다.
    ======================================================================= */
 const TRAP_COUNT = 2;
 const TRAP_MOBS  = 12;
+const SPRING_COUNT = 1;
+const DARE_COUNT   = 1;
 function assignTraps(M){
   try{
     if(!M) return M;
@@ -1436,9 +1444,75 @@ function assignTraps(M){
       cand.push(k);
     }
     for(let i=cand.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); const t=cand[i]; cand[i]=cand[j]; cand[j]=t; }
-    for(let i=0;i<Math.min(TRAP_COUNT,cand.length);i++) M[cand[i]].trap=1;
+    let p=0;
+    for(let i=0;i<TRAP_COUNT && p<cand.length;i++)   M[cand[p++]].trap=1;
+    for(let i=0;i<SPRING_COUNT && p<cand.length;i++) M[cand[p++]].spring=1;
+    for(let i=0;i<DARE_COUNT && p<cand.length;i++)   M[cand[p++]].dare=1;
   }catch(e){}
   return M;
+}
+/* ==================== [DEX] 몬스터 도감 ====================
+   잡은 몬스터를 '지역 × 종류'로 기록해 둔다. 기기에 계속 남아 판이 끝나도 사라지지 않는다.
+   반복해서 놀 이유를 만들어 주는 장치다.
+   ======================================================================= */
+const DEXKEY='mz_dex';
+function dexRead(){ try{ return JSON.parse(localStorage.getItem(DEXKEY))||{}; }catch(e){ return {}; } }
+function dexWrite(o){ try{ localStorage.setItem(DEXKEY, JSON.stringify(o)); }catch(e){} }
+function dexAdd(rg, kind){
+  if(!rg||!kind) return;
+  const d=dexRead(), k=rg+':'+kind;
+  const first=!d[k];
+  d[k]=(d[k]||0)+1; dexWrite(d);
+  if(first){
+    try{ toast('📖 새로운 몬스터 발견!  '+mobName(rg,kind),2200); }catch(e){}
+    try{ beep(880,.05); setTimeout(()=>beep(1180,.07),70); }catch(e){}
+  }
+}
+/* 도감에 실릴 전체 목록 (지역 × 그 지역에 나오는 종류) */
+function dexAll(){
+  const out=[];
+  for(const rg in REGION_MOBS){
+    if(rg==='shop'||rg==='bridge'||rg==='dogbridge'||rg==='timegate') continue;
+    (REGION_MOBS[rg]||[]).forEach(kind=>out.push({rg,kind}));
+  }
+  return out;
+}
+function dexStats(){
+  const d=dexRead(), all=dexAll();
+  let got=0, total=0;
+  all.forEach(e=>{ total++; if(d[e.rg+':'+e.kind]) got++; });
+  return {got,total,data:d,all};
+}
+/* 도감 화면 */
+function openDex(){
+  const st=dexStats();
+  let ov=$('dexOv');
+  if(ov) ov.remove();
+  ov=document.createElement('div'); ov.id='dexOv';
+  ov.style.cssText='position:fixed;inset:0;z-index:99998;background:#12101a;color:#eee;'+
+    'font:13px/1.6 system-ui,sans-serif;overflow:auto;padding:14px';
+  const pct=st.total?Math.round(st.got/st.total*100):0;
+  let html='<div style="max-width:900px;margin:0 auto">'+
+    '<h2 style="color:#f2c14e;margin:0 0 4px">📖 몬스터 도감</h2>'+
+    '<div style="color:#9aa4b8;margin-bottom:10px">'+st.got+' / '+st.total+' 마리 발견 ('+pct+'%)</div>'+
+    '<div style="background:#2a2438;height:12px;border:2px solid #f2c14e;margin-bottom:14px">'+
+      '<div style="background:#f2c14e;height:100%;width:'+pct+'%"></div></div>'+
+    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px">';
+  st.all.forEach(e=>{
+    const n=st.data[e.rg+':'+e.kind]||0;
+    const nm = n? mobName(e.rg,e.kind) : '???';
+    html+='<div style="border:2px solid '+(n?'#f2c14e':'#3a3450')+';background:'+(n?'#241f33':'#191524')+
+      ';padding:7px;text-align:center;border-radius:6px">'+
+      '<div style="font-size:11px;color:'+(n?'#ffe9a8':'#5a5470')+';min-height:30px">'+nm+'</div>'+
+      '<div style="font-size:10px;color:'+(n?'#9aa4b8':'#3a3450')+';margin-top:3px">'+(n? n+'마리':'미발견')+'</div>'+
+    '</div>';
+  });
+  html+='</div><div style="margin-top:16px;text-align:center">'+
+    '<button id="dexClose" style="padding:10px 26px;background:#f2c14e;color:#201a10;'+
+    'font-weight:700;border:0;border-radius:6px;font-size:14px">닫기</button></div></div>';
+  ov.innerHTML=html;
+  document.body.appendChild(ov);
+  $('dexClose').onclick=()=>ov.remove();
 }
 function generateMap(seed, dk){
   if(dk) DIFFKEY=dk;
@@ -2990,10 +3064,12 @@ function buildScreen(key,entry){
   const mobs=[];
   const noMobHere = def.tut || key===MAPSTART;   // 튜토리얼 방 · 시작 방엔 몹 없음
   const isTrap = !!def.trap && !noMobHere;       // 함정 칸: 약한 몹이 떼로 나온다
-  if(!def.shop && def.rg!=='bridge' && def.rg!=='timegate' && def.rg!=='dogbridge' && !noMobHere){
+  const isDare = !!def.dare && !noMobHere;       // 도전방: 딱 한 마리, 연속 3정답
+  if(!def.shop && def.rg!=='bridge' && def.rg!=='timegate' && def.rg!=='dogbridge' && !noMobHere && !def.spring){
     let n = def.boss?0 : (def.rg==='castle'?3 : def.rg==='field'?2:3);
     if(def.chest) n=2;
     if(isTrap) n=TRAP_MOBS;                      // 12마리
+    if(isDare) n=1;                              // 도전방은 한 마리만
     const doors=[...(ENTRY[key]||[])].map(d=>ENTRY_POS[d]);
     const nearDoor=(x,y)=>doors.some(p=>Math.hypot(x-p.x,y-p.y)<SAFE_R);
     const spots=[];
@@ -3020,8 +3096,9 @@ function buildScreen(key,entry){
       const kind=mobPool[Math.floor(R()*mobPool.length)];
       const sp2=isTrap?.175:.35;                 // 함정 몹은 절반 속도
       mobs.push({i,x:tx*TS+8,y:PY+ty*TS+8,kind,rg:def.rg,
-        tier: def.rg==='castle'?2:1, hits: isTrap?1:2, trap: isTrap?1:0,
-        name: mobName(def.rg,kind),
+        tier: def.rg==='castle'?2:1,
+        hits: isTrap?1:(isDare?3:2), trap: isTrap?1:0, dare: isDare?1:0,
+        name: (isDare?'도전! ':'')+mobName(def.rg,kind),
         vx:(R()<.5?-1:1)*sp2, vy:(R()<.5?-1:1)*sp2, t:R()*100});
     }
   }
@@ -4226,6 +4303,12 @@ function drawEntities(){
   // chest
   if(scr.def.chest && !S.chests[scr.def.chest]) drawChest(120,PY+72);
   else if(scr.def.chest) drawChest(120,PY+72,true);
+  if(scr.def.spring && !scr.springDone){          // 샘터의 요정
+    const bob=Math.sin(TICK/9)*1.5;
+    cx.fillStyle='rgba(120,220,255,0.18)';
+    cx.beginPath(); cx.arc(128, PY+80, 22+Math.sin(TICK/14)*3, 0, 7); cx.fill();
+    drawChick(128, PY+76, bob);
+  }
   if(scr.def.ins && insVisible(scr.def)){
     insList(scr.def).forEach(it=>{
       drawChest(it.x, it.y, true);
@@ -6030,9 +6113,10 @@ function timeWarpFX(){ const f=$('warpFlash'); if(!f) return; f.classList.add('o
 function gotoScreen(key,dir){
   const prevRg = scr && scr.def && scr.def.rg;
   const prevKey = scr && scr.key;
-  /* 함정 칸을 빠져나가면 그 방은 평범한 방으로 돌아간다 */
-  if(prevKey && MAP[prevKey] && MAP[prevKey].trap && prevKey!==key){
-    delete MAP[prevKey].trap;
+  /* 특별한 방을 빠져나가면 그 방은 평범한 방으로 돌아간다 */
+  if(prevKey && MAP[prevKey] && prevKey!==key &&
+     (MAP[prevKey].trap || MAP[prevKey].spring || MAP[prevKey].dare)){
+    delete MAP[prevKey].trap; delete MAP[prevKey].spring; delete MAP[prevKey].dare;
     for(const kk in S.dead){ if(kk.indexOf(prevKey+':')===0) delete S.dead[kk]; }
   }
   S.screen=key; tapTarget=null;
@@ -6061,6 +6145,8 @@ function gotoScreen(key,dir){
   S.steps++;
   const nm=rgLabel(scr.def);
   if(scr.def.trap){ try{ trapAlertFX(); }catch(e){} }
+  else if(scr.def.spring && !scr.springDone){ toast('✨ 샘터를 찾았다!\n요정 앞에서 [확인]을 누르면 하트를 채워 준다.',2600); }
+  else if(scr.def.dare){ toast('★ 도전 몬스터가 나타났다!\n연속 3문제를 맞히면 골드 벼락!',2600); }
   else if(scr.def.boss && !S.bosses[scr.def.boss]){
     const _sk=bossSkin(scr.def.boss);
     if(_sk && _sk.still) toast('🔒 '+_sk.name+' 발견!',1600);
@@ -6114,7 +6200,21 @@ function interact(){
     S.chests[scr.def.chest]=1; S.gold+=100; S.hearts=S.maxHearts;
     toast('보물상자를 열었다! 골드 +100, 하트 전부 회복!',2200); save(); return;
   }
+  /* 샘터 — 병아리 요정에게 다가가 [확인]을 누르면 문제 하나를 낸다 */
+  if(scr.def.spring && !scr.springDone && Math.abs(S.px-128)<26 && Math.abs(S.py-(PY+78))<26){
+    startSpring(); return;
+  }
 }
+/* 샘터: 문제 1개를 맞히면 하트를 채워 준다 (틀려도 하트는 잃지 않는다) */
+function startSpring(){
+  if(battle.on) return;
+  const kind=(REGION_MOBS[scr.def.rg]||MOBKIND)[0];   // 아트가 있는 종류를 쓴다
+  const foe={ i:'spring', kind:kind, rg:scr.def.rg, tier:1, hits:1,
+              name:'샘터의 요정', spring:1, x:128, y:PY+78 };
+  scr.springDone=1;
+  startBattle(foe, false);
+}
+
 
 /* =======================================================================
    [BATTLE] 수학 문제 · 카드 탭 입력
@@ -6639,7 +6739,7 @@ function setMsg(t,cls){ const m=$('bMsg'); m.textContent=t; m.className='msg '+(
 function fillSlot(s,v,kind){
   if(s.dataset.accept!==kind){ s.classList.add('bad'); setTimeout(()=>s.classList.remove('bad'),320);
     setMsg(kind==='o'
-      ? '여기에는 숫자 카드(0~9)를 넣어야 한다.'
+      ? (engSubjectOn()?'여기에는 글자 카드를 넣어야 한다.':'여기에는 숫자 카드(0~9)를 넣어야 한다.')
       : '여기에는 '+opNames()+' 중 하나를 넣어야 한다.','no'); return; }
   s.dataset.val=v; s.textContent=v; s.classList.add('filled'); beep(660,.05);
   updateFacePreview();
@@ -6655,7 +6755,7 @@ function tapCard(card){
   const fits = battle.slots.filter(s=>s.dataset.accept===kind);
   if(!fits.length){
     setMsg(kind==='o' ? '지금 문제에는 '+opNames()+' 카드를 넣을 칸이 없다.'
-                      : '지금 문제에는 숫자 카드를 넣을 칸이 없다.','no');
+                      : (engSubjectOn()?'지금 문제에는 글자 카드를 넣을 칸이 없다.':'지금 문제에는 숫자 카드를 넣을 칸이 없다.'),'no');
     card.classList.add('bad'); setTimeout(()=>card.classList.remove('bad'),320);
     return;
   }
@@ -6811,9 +6911,20 @@ function winBattle(){
       setTimeout(()=>toast('🗝️ 열쇠를 얻었다! ('+kc+'/'+CASTLE_KEYS_NEEDED+')'+(kc>=CASTLE_KEYS_NEEDED?'\n★ 마왕의 방으로 가는 길이 열렸다!':''),3000),2600);
     }
   } else {
-    S.dead[scr.key+':'+foe.i]=1; S.gold+=10;
-    scr.mobs=scr.mobs.filter(m=>m!==foe);
-    if(Math.random()<0.28 && S.hearts<S.maxHearts){ S.hearts++; toast('하트를 얻었다! ♥+1',1500); }
+    if(foe.spring){                       // 샘터 요정 — 하트를 채워 준다
+      const before=S.hearts;
+      S.hearts=Math.min(S.maxHearts, S.hearts+3);
+      toast('샘물을 마셨다! ♥ +'+(S.hearts-before),2000);
+    } else {
+      S.dead[scr.key+':'+foe.i]=1;
+      try{ dexAdd(foe.rg, foe.kind); }catch(e){}   // 도감에 기록
+      if(foe.dare){                       // 도전방 — 연속 3정답 성공
+        S.gold+=120;
+        toast('★ 도전 성공! 골드 +120',2400);
+      } else S.gold+=10;
+      scr.mobs=scr.mobs.filter(m=>m!==foe);
+      if(Math.random()<0.28 && S.hearts<S.maxHearts){ S.hearts++; toast('하트를 얻었다! ♥+1',1500); }
+    }
   }
   S.wins++;
   battle.on=false; clearSel(); elB.classList.remove('show');
@@ -10846,18 +10957,18 @@ const CHAR_SLOTS=[
   {key:'chara_musa', run:'musa', name:'무사'},
   {key:'chara_ghost', run:'ghost', name:'유령'},
   {key:'hero', name:'용사', unlock:'hero',
-    unlockMsg:'모든 기본 캐릭터로 고급 난이도를 클리어하면 공개됩니다.'},
+    unlockMsg:'모든 기본 캐릭터로 초급 난이도를 클리어하면 공개됩니다.'},
   {key:'heroine', name:'소녀', unlock:'heroine',
     unlockMsg:'용사까지 포함해 모두 고급 난이도를 클리어하면 공개됩니다.'}
 ];
 /* 기본 6인(히든 제외). 이들의 클리어 기록이 해금 판정의 기준이 된다. */
 const BASE_CHARS=['chara_b','chara_g','catcat','robot','musa','ghost'];
 /* 히든 해금 조건
-   · hero(용사)     : 기본 6인을 모두 고급 클리어
+   · hero(용사)     : 기본 6인을 모두 초급 클리어
    · heroine(소녀)  : 기본 6인 + 용사까지, 즉 7인을 모두 고급 클리어(최종 히든) */
 function isUnlocked(u){
   if(!u) return true;
-  if(u==='hero')     return BASE_CHARS.every(ck=>clearOf(ck).n);
+  if(u==='hero')     return BASE_CHARS.every(ck=>clearOf(ck).e);
   if(u==='heroine')  return BASE_CHARS.every(ck=>clearOf(ck).n) && clearOf('hero').n;
   return true;
 }
@@ -10873,6 +10984,7 @@ function showTitleStep(step){   // 'mode' | 'home' | 'diff' | 'char' | 'chap'
   $('titleChar').style.display = step==='char'?'':'none';
   $('titleChap').style.display = step==='chap'?'':'none';
   $('title').classList.add('show');
+  try{ applySubjectUI(); }catch(e){}     // 화면이 바뀔 때마다 과목 문구를 맞춘다
   if(step==='diff'){
     buildDiffs();
     const lb=$('titleLB');
@@ -10914,7 +11026,8 @@ function buildShelf(){
         const rs2=storyResume(c.n);
         let info='<b>제'+c.n+'화 · '+c.name+' — 「'+c.sub+'」</b><br>'+c.desc;
         const mk=STORY_MATH[c.n];
-        if(mk) info += '<br><span style="color:#8ad67a">📐 배우는 것: '+(MATH_LABEL[mk]||mk)+'</span>';
+        if(engSubjectOn()) info += '<br><span style="color:#8ad67a">🔤 배우는 것: 알파벳 이름</span>';
+        else if(mk) info += '<br><span style="color:#8ad67a">📐 배우는 것: '+(MATH_LABEL[mk]||mk)+'</span>';
         if(rs2){
           info += '<br><span style="color:#8ad6f2">📖 읽던 중'+
                   (rs2.place?' — '+rs2.place:'')+
@@ -10957,13 +11070,20 @@ $('btnChapRestart').onclick=()=>{
   chapRestart=true; buildShelf(); showTitleStep('diff');
 };
 
+/* 영어 모드일 때의 난이도 설명 (수학 문구를 그대로 쓰면 어색하다) */
+const DIFF_SUB_ENG = {
+  baby:  'A~F 알파벳 · 3개 중 정답 고르기 · 하트 10개',
+  easy:  'A~J 알파벳 · 3개 중 정답 고르기 (3지선다)',
+  normal:'A~Z 전체 · 글자 카드를 골라 빈칸 채우기'
+};
 function buildDiffs(){
   const box=$('diffs'); box.innerHTML='';
   ['baby','easy','normal'].forEach(k=>{
     const D=DIFF[k];
+    const sub=(engSubjectOn() && DIFF_SUB_ENG[k]) ? DIFF_SUB_ENG[k] : D.sub;
     const d=document.createElement('div');
     d.className='diff'+(k===chosenDiff?' sel':'');
-    d.innerHTML='<b>'+D.label+'</b><small>'+D.sub+'</small>';
+    d.innerHTML='<b>'+D.label+'</b><small>'+sub+'</small>';
     d.onclick=()=>{
       if(chosenDiff!==k){   // 난이도가 바뀔 때만 순위표 갱신 (깜빡임 방지)
         chosenDiff=k; try{localStorage.setItem('mathzelda_diff',k);}catch(e){}
@@ -11585,20 +11705,26 @@ $('tutNextBtn').onclick=tutNext;
 $('tutPrev').onclick=tutPrev;
 
 
-/* 첫 화면의 수학/영어 전환 — 제목과 버튼 표시를 함께 바꾼다 */
+/* 첫 화면의 수학/영어 전환 — 모든 화면의 제목과 설명을 함께 바꾼다 */
 function applySubjectUI(){
+  const eng=engSubjectOn();
   const b=$('subjSwitch');
   if(b){
-    b.textContent = engSubjectOn() ? '🔤 영어' : '🔢 수학';
-    b.classList.toggle('eng', engSubjectOn());
+    b.textContent = eng ? '🔤 영어' : '🔢 수학';
+    b.classList.toggle('eng', eng);
   }
-  const h1=$('titleH1'), h2=$('titleH2');
-  if(h1) h1.innerHTML = engSubjectOn()
-    ? 'C.A.R.D. 게임으로<br>즐거운 알파벳 학습'
-    : 'C.A.R.D. 게임으로<br>즐거운 연산학습';
-  if(h2) h2.textContent = engSubjectOn()
-    ? '알파벳 이름 익히기 · 글자 카드 겨루기'
-    : '더하고 뺀다 · 크다 작다 · 숫자 카드 겨루기';
+  const H1 = eng ? 'C.A.R.D. 게임으로<br>즐거운 알파벳 학습'
+                 : 'C.A.R.D. 게임으로<br>즐거운 연산학습';
+  const H2 = eng ? '알파벳 이름 익히기 · 글자 카드 겨루기'
+                 : '더하고 뺀다 · 크다 작다 · 숫자 카드 겨루기';
+  ['titleH1','homeH1'].forEach(id=>{ const e=$(id); if(e) e.innerHTML=H1; });
+  ['titleH2','homeH2'].forEach(id=>{ const e=$(id); if(e) e.textContent=H2; });
+  try{ document.title = eng ? 'C.A.R.D. 게임으로 즐거운 알파벳 학습'
+                            : 'C.A.R.D. 게임으로 즐거운 연산학습'; }catch(e){}
+  /* 난이도 설명도 과목에 맞게 */
+  try{ if($('diffs') && $('diffs').children.length) buildDiffs(); }catch(e){}
+  /* 책장이 열려 있으면 다시 그려 설명을 갱신한다 */
+  try{ if($('shelf') && $('shelf').children.length) buildShelf(); }catch(e){}
 }
 
 loadImages(()=>{
@@ -11612,6 +11738,8 @@ loadImages(()=>{
   { const sb=$('subjSwitch');
     if(sb) sb.onclick=()=>{ setSubject(engSubjectOn()?'math':'eng');
       try{ beep(engSubjectOn()?740:520,.05); }catch(e){} }; }
+  { const db=$('dexBtn');
+    if(db) db.onclick=()=>{ try{ beep(620,.05); }catch(e){} openDex(); }; }
   $('btnCont').disabled = !anySlotUsed();
   try{ if(location.hash && /(^|#)log/.test(location.hash)) setTimeout(function(){ openWrongLog(true); }, 300); }catch(e){}
   /* 주소창에 #log 를 붙이면 (새로고침 없이도) 교사 열람 화면을 연다 */
