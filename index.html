@@ -183,7 +183,23 @@
   .cslot .lock{font-size:34px;color:#6b6b72}
   .cslot.quake{animation:quake .4s}
   @keyframes quake{0%,100%{transform:translateX(0)}20%{transform:translateX(-9px)}40%{transform:translateX(8px)}60%{transform:translateX(-6px)}80%{transform:translateX(5px)}}
-  /* 함정 칸 — 화면 흔들림과 붉은 경고 */
+  /* 쌓기나무 도움말 — 틀렸을 때 식 아래에 나타난다 */
+  #hintBox{margin:6px auto 2px;padding:7px 8px;background:#1b1728;border:2px solid #6a5f8f;
+    border-radius:8px;max-width:96%;animation:hbIn .28s ease-out}
+  @keyframes hbIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+  .hbLine{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:3px}
+  .hbRow{display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px;justify-content:center}
+  .hb{display:inline-block;width:14px;height:14px;border:2px solid #000;box-sizing:border-box;
+    box-shadow:1px 1px 0 #000}
+  .hbA{background:#7fc95a}
+  .hbB{background:#8ad6f2}
+  .hbGap{display:inline-block;width:5px}
+  .hbX{background:#4a4458;position:relative;opacity:.85}
+  .hbX::after{content:'';position:absolute;left:1px;right:1px;top:50%;height:2px;
+    background:#ff5a4a;transform:rotate(-45deg)}
+  .hbOp{color:#f2c14e;font-weight:900;font-size:17px;margin:0 5px}
+  .hbCap{margin-top:5px;text-align:center;font-size:11px;color:#c8bfe0}
+  @media (max-width:520px){ .hb{width:12px;height:12px} }
   @keyframes trapQ{0%,100%{transform:translate(0,0)}
     10%{transform:translate(-7px,3px)}20%{transform:translate(6px,-4px)}
     30%{transform:translate(-6px,-3px)}40%{transform:translate(5px,4px)}
@@ -696,6 +712,7 @@
     </div>
     <div class="eqbox">
       <div class="eq" id="eq"></div>
+      <div id="hintBox" style="display:none"></div>
       <div id="qtimer"><div id="qtimerFill"></div><div id="qtimerTxt"></div></div>
       <div class="msg" id="bMsg">카드를 눌러 빈칸을 채워라</div>
     </div>
@@ -6675,6 +6692,7 @@ function resetFoeForQuestion(){
   startQTimer();
 }
 function nextQuestion(){
+  try{ hideBlockHint(); }catch(e){}      // 새 문제에서는 도움말을 치운다
   const tier = battle.isBoss? battle.foe.def.tier : battle.foe.tier;
   battle.q=genQ(tier);
   if(battle.q.mc){ nextQuestionMC(); return; }
@@ -6703,6 +6721,7 @@ function nextQuestion(){
   resetFoeForQuestion();
 }
 function nextQuestionMC(){
+  try{ hideBlockHint(); }catch(e){}      // 새 문제에서는 도움말을 치운다
   const eq=$('eq');
   eq.innerHTML=''; battle.slots=[];
   const d=document.createElement('div'); d.textContent=battle.q.text;
@@ -6855,6 +6874,71 @@ function correct(){
   if(battle.done>=battle.hits){ setTimeout(winBattle,700); }
   else setTimeout(nextQuestion,850);
 }
+/* ==================== [HINT] 쌓기나무 도움말 ====================
+   덧셈·뺄셈을 틀렸을 때, 식 아래에 블록을 그려 눈으로 세어 볼 수 있게 한다.
+   더하기: ■■■ + ■■  →  합쳐서 세기
+   빼기  : ■■■■■ 중 뒤에서 두 개에 X  →  남은 것 세기
+   ============================================================== */
+/* 지금 문제에서 a, 연산자, b 를 뽑아낸다. 덧뺄셈이 아니면 null */
+function hintParts(){
+  const q=battle.q; if(!q) return null;
+  if(q.eng) return null;                       // 영어 모드는 대상 아님
+  if(q.mc){                                    // 3지선다: "7 + 5 = ?" 형태
+    const m=String(q.text||'').match(/^\s*(\d+)\s*([+\-])\s*(\d+)\s*=/);
+    if(!m) return null;
+    const a=+m[1], b=+m[3];
+    if(a>20||b>20) return null;                // 너무 많으면 세는 의미가 없다
+    return {a, op:m[2], b, ans:(m[2]==='+'? a+b : a-b)};
+  }
+  /* 카드 배치: 토큰에서 숫자와 연산자를 읽는다 (빈칸은 정답으로 채워 본다) */
+  const tok=q.tok; if(!tok) return null;
+  const val=t=>{
+    if(t.t==='slot') return t.ans;
+    return t.v;
+  };
+  let left=[], op=null, seenEq=false;
+  for(const t of tok){
+    if(t.t==='eq'){ seenEq=true; continue; }
+    if(seenEq) continue;
+    if(t.t==='o'){ op=t.v; continue; }
+    left.push(val(t));
+  }
+  if(!op || (op!=='+'&&op!=='-')) return null;
+  if(left.length!==2) return null;
+  const a=parseInt(left[0],10), b=parseInt(left[1],10);
+  if(!isFinite(a)||!isFinite(b)||a>20||b>20) return null;
+  return {a, op, b, ans:(op==='+'? a+b : a-b)};
+}
+/* 블록 한 줄을 만든다 (10개마다 줄바꿈해서 십진 감각을 돕는다) */
+function hintBlocksHTML(n, cls, xFrom){
+  let h='<span class="hbRow">';
+  for(let i=0;i<n;i++){
+    const x = (xFrom!=null && i>=xFrom) ? ' hbX' : '';
+    h+='<i class="hb '+cls+x+'"></i>';
+    if((i+1)%5===0 && i+1<n) h+='<b class="hbGap"></b>';
+  }
+  return h+'</span>';
+}
+function showBlockHint(){
+  const p=hintParts();
+  const box=$('hintBox'); if(!box) return;
+  if(!p){ box.style.display='none'; box.innerHTML=''; return; }
+  let inner='';
+  if(p.op==='+'){
+    inner = '<div class="hbLine">'+
+        hintBlocksHTML(p.a,'hbA')+'<span class="hbOp">+</span>'+hintBlocksHTML(p.b,'hbB')+
+      '</div>'+
+      '<div class="hbCap">모두 몇 개인지 세어 보자</div>';
+  }else{
+    inner = '<div class="hbLine">'+
+        hintBlocksHTML(p.a,'hbA', Math.max(0,p.a-p.b))+
+      '</div>'+
+      '<div class="hbCap">'+p.b+'개를 덜어내면 몇 개가 남을까?</div>';
+  }
+  box.innerHTML=inner;
+  box.style.display='';
+}
+function hideBlockHint(){ const b=$('hintBox'); if(b){ b.style.display='none'; b.innerHTML=''; } }
 function wrong(timeout){
   if(battle.lock) return;            // 이미 채점된 문항이면 무시
   try{ wlogAdd(timeout); }catch(e){}  // 어떤 문제를 어떻게 틀렸는지 기록
@@ -6863,6 +6947,7 @@ function wrong(timeout){
   beep(180,.18);
   S.wrongs++;
   S.hearts--; drawBHearts();
+  try{ showBlockHint(); }catch(e){}     // 쌓기나무로 다시 세어 볼 수 있게
   const isMC = !!(battle.q && battle.q.mc);
   if(!isMC){
     battle.slots.forEach(s=>{s.classList.add('bad');setTimeout(()=>s.classList.remove('bad'),320);});
