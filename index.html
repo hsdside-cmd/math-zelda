@@ -142,6 +142,7 @@
     box-shadow:2px 2px 0 #000;line-height:1;white-space:nowrap}
   #subjSwitch:active{transform:translate(2px,2px);box-shadow:none}
   #subjSwitch.eng{background:#1e3a4a;border-color:#5ad0e0;color:#bdf0ff}
+  #subjSwitch.kor{background:#3a2440;border-color:#e08ad0;color:#ffd6f2}
   #dexBtn{position:absolute;top:46px;right:10px;z-index:5;padding:7px 12px;
     background:#2c3a2e;border:3px solid #7fc95a;color:#dff5cf;
     font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;
@@ -183,7 +184,18 @@
   .cslot .lock{font-size:34px;color:#6b6b72}
   .cslot.quake{animation:quake .4s}
   @keyframes quake{0%,100%{transform:translateX(0)}20%{transform:translateX(-9px)}40%{transform:translateX(8px)}60%{transform:translateX(-6px)}80%{transform:translateX(5px)}}
-  /* 쌓기나무 도움말 — 틀렸을 때 식 아래에 나타난다 */
+  /* 따라쓰기 — 모눈 칸에 정답을 손으로 써 본다 */
+  #traceOv{position:fixed;inset:0;z-index:70;background:rgba(10,8,18,.86);
+    display:flex;align-items:center;justify-content:center;padding:12px}
+  .trBox{background:linear-gradient(#241f33,#171322);border:3px solid var(--gold);
+    border-radius:12px;padding:14px;max-width:min(560px,96vw);text-align:center}
+  .trTitle{color:var(--gold);font-weight:900;font-size:clamp(15px,4.4vw,20px);margin-bottom:10px}
+  .trCells{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+  .trCell{width:clamp(74px,21vw,116px);height:clamp(74px,21vw,116px);
+    background:#fff;border-radius:6px;touch-action:none;cursor:crosshair}
+  .trMsg{margin-top:9px;font-size:12px;color:#c8bfe0;min-height:18px}
+  .trBtns{margin-top:10px;display:flex;gap:8px;justify-content:center}
+  .trBtns .btn{min-width:110px}
   #hintBox{margin:6px auto 2px;padding:7px 8px;background:#1b1728;border:2px solid #6a5f8f;
     border-radius:8px;max-width:96%;animation:hbIn .28s ease-out}
   @keyframes hbIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
@@ -2840,6 +2852,13 @@ function hasItem(id){ return !!(S && S.items && S.items[id]); }
 function effHits(base){ return Math.max(1, base - (hasItem('sword')?1:0)); }
 /* -------- [RECORDS] 개인 기록 -------- */
 const RECKEY='mathzelda_records_v1';
+/* 순위표·개인기록은 과목마다 따로 남긴다.
+   수학은 접미사를 붙이지 않아, 그동안 쌓인 기록이 그대로 이어진다. */
+function subjSuffix(){
+  try{ if(korSubjectOn()) return '_kor';
+       if(engSubjectOn()) return '_eng'; }catch(e){}
+  return '';
+}
 let BEST=null;
 function curCk(){
   try{ if($('title') && $('title').classList.contains('show')) return chosenRun||chosen; }catch(e){}
@@ -2847,15 +2866,21 @@ function curCk(){
   return chosenRun||chosen||'chara_b';
 }
 function charNameOf(ck){ const c=CHAR_SLOTS.find(c=>c && (c.run||c.key)===ck); return c?c.name:'소년'; }
-function getRecords(d,ck){
+function getRecords(d,ck,all){
   let a=[]; try{ a=JSON.parse(localStorage.getItem(RECKEY))||[]; }catch(e){}
-  a.forEach(r=>{ if(!r.diff) r.diff='normal'; if(!r.ck) r.ck='chara_b'; });
+  a.forEach(r=>{ if(!r.diff) r.diff='normal'; if(!r.ck) r.ck='chara_b';
+                 if(!r.sj) r.sj='math'; });          // 옛 기록은 수학으로 본다
+  if(!all){
+    const sj = subjSuffix()==='_kor' ? 'kor' : (subjSuffix()==='_eng' ? 'eng' : 'math');
+    a=a.filter(r=>r.sj===sj);                        // 과목이 같은 것만
+  }
   if(d) a=a.filter(r=>r.diff===d);
   if(ck) a=a.filter(r=>r.ck===ck);
   return a;
 }
 function addRecord(r){
-  try{ const a=getRecords(); a.push(r); a.sort((x,y)=>x.time-y.time);
+  r.sj = subjSuffix()==='_kor' ? 'kor' : (subjSuffix()==='_eng' ? 'eng' : 'math');
+  try{ const a=getRecords(null,null,true); a.push(r); a.sort((x,y)=>x.time-y.time);
     localStorage.setItem(RECKEY, JSON.stringify(a.slice(0,40))); }catch(e){}
   refreshBest(); return r;
 }
@@ -2923,7 +2948,7 @@ function lbSubmit(entry){
   addRecord(entry);                 // 로컬(이 기기) 기록 — 안전장치
   if(LB.on && LB.db){
     try{
-      LB.db.ref('scores/'+(entry.ck||'chara_b')+'_'+entry.diff).push({
+      LB.db.ref('scores/'+(entry.ck||'chara_b')+'_'+entry.diff+subjSuffix()).push({
         name: (entry.name||'익명').slice(0,12), ck: entry.ck||'chara_b',
         time: entry.time, wrongs: entry.wrongs, char: entry.char||'chara_b',
         equip: entry.equip||{}, date: entry.date, ts: Date.now()
@@ -2936,7 +2961,7 @@ function lbSubmit(entry){
 function lbFetch(diff, ck, cb){
   if(LB.on && LB.db){
     // 인덱스가 없어도 되도록: 전체를 받아 자바스크립트에서 정렬 (교실 규모에 충분)
-    LB.db.ref('scores/'+ck+'_'+diff).get()
+    LB.db.ref('scores/'+ck+'_'+diff+subjSuffix()).get()
       .then(snap=>{
         const arr=[];
         snap.forEach(ch=>{ const v=ch.val(); if(v && typeof v.time==='number') arr.push(v); });
@@ -2955,7 +2980,9 @@ function localList(diff,ck){
 /* 순위표 HTML을 지정한 요소에 채운다 */
 function renderLeaderboard(el, diff, opts){
   opts=opts||{};
-  const ck=opts.ck||curCk(), lbl=charNameOf(ck)+' · '+DIFF[diff].label;
+  const ck=opts.ck||curCk();
+  const sjName = subjSuffix()==='_kor' ? '국어' : (subjSuffix()==='_eng' ? '영어' : '수학');
+  const lbl=sjName+' · '+charNameOf(ck)+' · '+DIFF[diff].label;
   el.innerHTML='<div class="lbHead">'+lbl+' 순위표 <span class="lbState">불러오는 중…</span></div>';
   lbFetch(diff, ck, (list, online)=>{
     const state = online ? '🌐 전체' : '📱 이 기기';
@@ -6407,6 +6434,74 @@ function mathModeNow(){
   return run ? (run.math||'addsub1') : 'addsub1';
 }
 
+/* ==================== [KOR] 국어 모드 — 그림 보고 낱말 고르기 ====================
+   그림은 이모지로 낸다(용량 0 · 오프라인 동작 · 태블릿에서 또렷하다).
+   오답 보기는 소리나 모양이 비슷한 낱말이라, 대충 찍지 않고 글자를 살펴야 한다.
+   ============================================================================= */
+const KORQ=[
+  ['🐶','강아지','송아지','망아지'], ['🐱','고양이','고구마','곰팡이'], ['🐰','토끼','토마토','도끼'],
+  ['🐻','곰','콩','공'], ['🐷','돼지','바지','가지'], ['🐔','닭','달','탈'],
+  ['🐮','소','손','솔'], ['🐴','말','발','물'], ['🐭','쥐','귀','취'],
+  ['🐯','호랑이','호미','고라니'], ['🦁','사자','상자','모자'], ['🐘','코끼리','코스모스','꼬리'],
+  ['🐸','개구리','개나리','다람쥐'], ['🐍','뱀','밤','뺨'], ['🐢','거북이','거미','너구리'],
+  ['🐝','벌','별','볼'], ['🐜','개미','거미','고미'], ['🦋','나비','나무','나사'],
+  ['🐟','물고기','불고기','물병'], ['🐦','새','세','쇠'], ['🍎','사과','사자','수박'],
+  ['🍌','바나나','바다','바구니'], ['🍉','수박','호박','사과'], ['🍓','딸기','달기','다리'],
+  ['🍇','포도','보도','코드'], ['🍊','귤','글','굴'], ['🥕','당근','단추','다리'],
+  ['🌽','옥수수','옥상','고구마'], ['🍞','빵','방','팡'], ['🥚','달걀','다람쥐','돌멩이'],
+  ['🍚','밥','밤','발'], ['🍜','국수','국화','구슬'], ['🍦','아이스크림','아이','크림빵'],
+  ['🍪','과자','가자','모자'], ['🥛','우유','우산','우주'], ['🍫','초콜릿','초록','촛불'],
+  ['🧀','치즈','치마','지도'], ['🍄','버섯','버스','버선'], ['🥔','감자','감기','과자'],
+  ['🍠','고구마','고양이','고구려'], ['🚗','자동차','자전거','잠자리'], ['🚌','버스','버섯','부스'],
+  ['🚲','자전거','자동차','전화기'], ['✈️','비행기','비누','빗자루'], ['🚀','로켓','로봇','포켓'],
+  ['🚂','기차','기타','김치'], ['🚁','헬리콥터','헬멧','호루라기'], ['🚢','배','뱀','베'],
+  ['🚑','구급차','구슬','자동차'], ['🛴','킥보드','칫솔','키보드'], ['🌞','해','새','혜'],
+  ['🌙','달','닭','탈'], ['⭐','별','벌','볼'], ['☁️','구름','그늘','구슬'],
+  ['🌧️','비','빗','삐'], ['❄️','눈','눔','논'], ['🌈','무지개','무릎','부채'],
+  ['🌊','바다','바나나','바닥'], ['🌳','나무','나비','너무'], ['🌸','꽃','꼭','콧'],
+  ['🍂','낙엽','나염','낚시'], ['⛰️','산','삼','손'], ['🔥','불','물','풀'],
+  ['💧','물','불','풀'], ['🌰','밤','밥','뱀'], ['✏️','연필','연못','열쇠'],
+  ['📚','책','책상','체'], ['🎒','가방','가위','각방'], ['✂️','가위','가방','거위'],
+  ['📏','자','차','잔'], ['🖍️','크레파스','크림','케이크'], ['🧽','지우개','지도','이불'],
+  ['📖','공책','공기','곰'], ['🕐','시계','시소','세계'], ['☂️','우산','우유','부산'],
+  ['👓','안경','안개','거울'], ['🔑','열쇠','연필','얼음'], ['🪑','의자','모자','이자'],
+  ['🛏️','침대','칭찬','치마'], ['🚪','문','물','눈'], ['🪟','창문','참새','장문'],
+  ['🧸','인형','인삼','이불'], ['⚽','공','곰','콩'], ['🎈','풍선','풀','붕어'],
+  ['🎁','선물','설탕','성문'], ['👕','옷','온','옥'], ['👖','바지','돼지','반지'],
+  ['👟','신발','신문','손발'], ['🧦','양말','얌전','양파'], ['🧢','모자','과자','사자'],
+  ['🧤','장갑','장미','간장'], ['👀','눈썹','눈물','눈치'], ['👂','귀','쥐','코'],
+  ['👃','코','코끼리','고'], ['✋','손','산','솔'], ['🏠','집','짐','칩'],
+  ['🏫','학교','학원','약국'], ['🏥','병원','병아리','정원'], ['🏪','가게','가위','고개'],
+  ['⛪','교회','교실','기회'],
+  /* ── 움직임·느낌 (동사·형용사) ── */
+  ['🏃','달리다','걷다','앉다','v'], ['🚶','걷다','뛰다','눕다','v'], ['😴','자다','울다','웃다','v'],
+  ['😂','웃다','울다','자다','v'], ['😭','울다','웃다','먹다','v'], ['🍽️','먹다','마시다','씻다','v'],
+  ['🥤','마시다','먹다','말하다','v'], ['📖','읽다','쓰다','듣다','v'], ['✍️','쓰다','읽다','그리다','v'],
+  ['🎨','그리다','쓰다','자르다','v'], ['🏊','헤엄치다','날다','구르다','v'], ['💃','춤추다','노래하다','박수치다','v'],
+  ['🎤','노래하다','춤추다','말하다','v'], ['👏','박수치다','손흔들다','잡다','v'], ['👋','손흔들다','박수치다','가리키다','v'],
+  ['🧼','씻다','닦다','먹다','v'], ['🪥','이닦다','세수하다','머리감다','v'], ['🍳','요리하다','설거지하다','청소하다','v'],
+  ['🧹','청소하다','요리하다','빨래하다','v'], ['🙏','빌다','절하다','안다','v'], ['😀','기쁘다','슬프다','무섭다','v'],
+  ['😢','슬프다','기쁘다','즐겁다','v'], ['😡','화나다','기쁘다','졸리다','v'], ['😱','무섭다','반갑다','배부르다','v'],
+  ['🥶','춥다','덥다','아프다','v'], ['🥵','덥다','춥다','시원하다','v'], ['🤒','아프다','건강하다','졸리다','v'],
+  ['🥱','졸리다','배고프다','신나다','v'], ['😋','맛있다','맵다','짜다','v'], ['🌶️','맵다','달다','시다','v'],
+];
+function korPool(){
+  const d=(S&&S.diff)||'normal';
+  /* 동사·형용사는 '-다'로 끝나 세 글자가 많다.
+     글자 수만으로 자르면 왕초보에서 아예 안 나오므로, 세 글자 동사까지는 넣어 준다. */
+  const isVerb=q=>q[4]==='v';
+  if(d==='baby') return KORQ.filter(q=>q[1].length<=2 || (isVerb(q) && q[1].length<=3));
+  if(d==='easy') return KORQ.filter(q=>q[1].length<=3 || isVerb(q));
+  return KORQ;                                            // 고급: 전부
+}
+/* 국어는 어느 난이도에서나 3지선다(그림을 보고 낱말을 고른다) */
+function genQKor(){
+  const pool=korPool();
+  const q=pool[Math.floor(Math.random()*pool.length)];
+  const choices=[q[1], q[2], q[3]];
+  for(let i=choices.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));const t=choices[i];choices[i]=choices[j];choices[j]=t;}
+  return {mc:true, kor:1, pic:q[0], text:q[0], answer:q[1], choices:choices};
+}
 /* ==================== [ENG] 영어 모드 — 알파벳 이름 ====================
    수학 모드와 같은 전투 구조를 그대로 쓴다.
    · 초급(3지선다) : 글자 A → 이름 '에이' 고르기 (또는 그 반대)
@@ -6431,12 +6526,18 @@ const ABC_CONFUSE={
   X:['S','Z'],     Y:['I','U']
 };
 function engSubjectOn(){ return SUBJECT==='eng'; }
+function korSubjectOn(){ return SUBJECT==='kor'; }
 let SUBJECT='math';
-try{ SUBJECT = localStorage.getItem('mz_subject')==='eng' ? 'eng' : 'math'; }catch(e){}
+try{ const _v=localStorage.getItem('mz_subject');
+     SUBJECT = (_v==='eng'||_v==='kor') ? _v : 'math'; }catch(e){}
 function setSubject(v){
-  SUBJECT = (v==='eng') ? 'eng' : 'math';
+  SUBJECT = (v==='eng'||v==='kor') ? v : 'math';
   try{ localStorage.setItem('mz_subject', SUBJECT); }catch(e){}
   applySubjectUI();
+}
+/* 수학 → 영어 → 국어 → 수학 … 순서로 돌아간다 */
+function nextSubject(){
+  return SUBJECT==='math' ? 'eng' : (SUBJECT==='eng' ? 'kor' : 'math');
 }
 /* 이번 판에서 다룰 글자 범위 — 난이도로 조절한다 */
 function engPool(){
@@ -6489,6 +6590,7 @@ function genQEngCard(){
 
 function genQ(tier){
   const D=DIFF[S.diff]||{};
+  if(korSubjectOn()) return genQKor();                 // 국어: 그림 보고 낱말 고르기
   if(engSubjectOn()){                                  // 영어 모드
     return D.mc ? genQEngMC() : genQEngCard();
   }
@@ -6570,7 +6672,8 @@ function startBattle(foe,isBoss){
   $('foeSub').textContent='정답 '+battle.hits+'번이면 쓰러진다';
   showIntroLine();
   $('foeHp').style.width='100%';
-  const isMC = !!(DIFF[S.diff]&&DIFF[S.diff].mc);
+  /* 국어는 어느 난이도에서나 그림을 보고 고르는 방식이다 */
+  const isMC = korSubjectOn() || !!(DIFF[S.diff]&&DIFF[S.diff].mc);
   $('cardMode').style.display = isMC?'none':'';
   $('mcMode').style.display   = isMC?'':'none';
   if(!isMC) buildTray();
@@ -6725,7 +6828,13 @@ function nextQuestionMC(){
   const eq=$('eq');
   eq.innerHTML=''; battle.slots=[];
   const d=document.createElement('div'); d.textContent=battle.q.text;
-  d.style.fontSize='clamp(28px,7vw,40px)'; eq.appendChild(d);
+  if(battle.q.kor){                       // 국어: 그림을 크게 보여 준다
+    d.style.fontSize='clamp(56px,17vw,96px)';
+    d.style.lineHeight='1.15';
+  } else {
+    d.style.fontSize='clamp(28px,7vw,40px)';
+  }
+  eq.appendChild(d);
   const box=$('mcChoices'); box.innerHTML='';
   battle.q.choices.forEach(v=>{
     const b=document.createElement('button'); b.className='mcBtn'; b.textContent=v;
@@ -6733,7 +6842,8 @@ function nextQuestionMC(){
     box.appendChild(b);
   });
   const _sk1 = battle.isBoss ? bossSkin(battle.foe.id) : null;
-  setMsg((battle.isBoss?(_sk1&&_sk1.still?'자물쇠! ':'보스전! '):'')+'정답을 골라라!','');
+  setMsg((battle.isBoss?(_sk1&&_sk1.still?'자물쇠! ':'보스전! '):'')+
+    (battle.q.kor?'그림에 알맞은 낱말을 골라라!':'정답을 골라라!'),'');
   resetFoeForQuestion();
 }
 function pickMC(btn, v){
@@ -6855,6 +6965,153 @@ function checkAnswer(){
   if(!st.filled){ setMsg('빈칸을 모두 채워야 한다!','no'); return; }
   if(st.ok) correct(); else wrong();
 }
+/* ==================== [TRACE] 따라쓰기 (고급 전용) ====================
+   카드로 정답을 맞힌 뒤, 모눈 칸에 정답을 손으로 따라 쓰면 공격이 들어간다.
+   판정은 글자를 '알아맞히는' 것이 아니라, 화면에 깔린 연한 회색 글자를
+   얼마나 덮었는지로 본다. 그래서 한글·숫자·알파벳 모두 그대로 동작하고,
+   글씨가 삐뚤어도 넉넉히 통과한다.
+     덮음(coverage) : 회색 획 중 아이가 지나간 비율     → 45% 이상
+     벗어남(spill)  : 아이 획 중 글자 밖으로 나간 비율  → 45% 이하
+   ===================================================================== */
+const TRACE_COV=0.55, TRACE_SPILL=0.25, TRACE_MININK=180, TRACE_OVER=3.2;
+let traceState=null;
+function traceNeeded(){
+  if(!S || S.diff!=='normal') return false;      // 고급에서만
+  const t=traceText();
+  return !!t && t.length<=4;                     // 너무 길면 생략
+}
+/* 이번 문제에서 따라 쓸 글자 */
+function traceText(){
+  const q=battle.q; if(!q) return '';
+  if(q.kor) return q.answer||'';                 // 국어: 낱말
+  if(q.eng){                                     // 영어: 글자
+    return /^[A-Z]$/.test(q.answer)? q.answer : '';
+  }
+  if(q.mc) return String(q.answer||'');          // 3지선다: 답
+  /* 카드 배치: 빈칸에 들어간 정답들을 이어 붙인다 */
+  let s='';
+  (q.tok||[]).forEach(t=>{ if(t.t==='slot') s+=(t.ans||''); });
+  return s;
+}
+function openTrace(onPass){
+  const text=traceText();
+  if(!text){ onPass(); return; }
+  let ov=$('traceOv');
+  if(ov) ov.remove();
+  ov=document.createElement('div'); ov.id='traceOv';
+  let cells='';
+  for(let i=0;i<text.length;i++)
+    cells+='<canvas class="trCell" width="192" height="192" data-i="'+i+'"></canvas>';
+  ov.innerHTML=
+    '<div class="trBox">'+
+      '<div class="trTitle">정답을 따라 써 보자</div>'+
+      '<div class="trCells">'+cells+'</div>'+
+      '<div class="trMsg" id="trMsg">회색 글자 위를 손가락으로 따라 쓰세요</div>'+
+      '<div class="trBtns">'+
+        '<button class="btn" id="trClear">지우개</button>'+
+        '<button class="btn" id="trOk" style="border-color:var(--gold);background:#4a3c17">다 썼어요</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(ov);
+  traceState={text, onPass, cells:[]};
+  [].forEach.call(ov.querySelectorAll('.trCell'), (cv,idx)=>{
+    traceState.cells.push(setupTraceCell(cv, text[idx]));
+  });
+  $('trClear').onclick=()=>{ traceState.cells.forEach(c=>c.clear()); $('trMsg').textContent='다시 따라 써 보자'; };
+  $('trOk').onclick=()=>judgeTrace();
+}
+/* 칸 하나: 모눈 + 연한 회색 글자 + 손글씨 레이어 */
+function setupTraceCell(cv, ch){
+  const g=cv.getContext('2d');
+  const S2=cv.width;
+  const ink=document.createElement('canvas'); ink.width=ink.height=S2;
+  const ig=ink.getContext('2d');
+  const font='bold '+Math.round(S2*0.72)+'px "Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif';
+  function grid(){
+    g.clearRect(0,0,S2,S2);
+    g.fillStyle='#fff'; g.fillRect(0,0,S2,S2);
+    g.strokeStyle='#c9c9d4'; g.lineWidth=2; g.strokeRect(1,1,S2-2,S2-2);
+    g.save(); g.strokeStyle='#d8d8e2'; g.lineWidth=2; g.setLineDash([7,7]);
+    g.beginPath(); g.moveTo(S2/2,0); g.lineTo(S2/2,S2);
+    g.moveTo(0,S2/2); g.lineTo(S2,S2/2); g.stroke(); g.restore();
+    g.fillStyle='#d0d0d8'; g.font=font; g.textAlign='center'; g.textBaseline='middle';
+    g.fillText(ch, S2/2, S2/2+2);
+  }
+  function repaint(){ grid(); g.drawImage(ink,0,0); }
+  grid();
+  let drawing=false, last=null, inked=0;
+  const pos=e=>{ const r=cv.getBoundingClientRect();
+    const t=(e.touches&&e.touches[0])||e;
+    return {x:(t.clientX-r.left)*S2/r.width, y:(t.clientY-r.top)*S2/r.height}; };
+  const start=e=>{ e.preventDefault(); drawing=true; last=pos(e); dot(last); };
+  const move=e=>{ if(!drawing) return; e.preventDefault();
+    const p=pos(e);
+    ig.strokeStyle='#2a3a8a'; ig.lineWidth=S2*0.075; ig.lineCap='round'; ig.lineJoin='round';
+    ig.beginPath(); ig.moveTo(last.x,last.y); ig.lineTo(p.x,p.y); ig.stroke();
+    last=p; inked++; repaint(); };
+  const end=e=>{ drawing=false; };
+  function dot(p){ ig.fillStyle='#2a3a8a'; ig.beginPath(); ig.arc(p.x,p.y,S2*0.037,0,7); ig.fill(); inked++; repaint(); }
+  cv.addEventListener('pointerdown',start); cv.addEventListener('pointermove',move);
+  cv.addEventListener('pointerup',end);     cv.addEventListener('pointerleave',end);
+  cv.addEventListener('touchstart',start,{passive:false});
+  cv.addEventListener('touchmove',move,{passive:false});
+  cv.addEventListener('touchend',end);
+  return {
+    ch,
+    clear(){ ig.clearRect(0,0,S2,S2); inked=0; repaint(); },
+    /* 회색 글자와 손글씨의 겹침을 잰다 */
+    score(){
+      const t=document.createElement('canvas'); t.width=t.height=S2;
+      const tg=t.getContext('2d');
+      tg.fillStyle='#000'; tg.font=font; tg.textAlign='center'; tg.textBaseline='middle';
+      tg.fillText(ch, S2/2, S2/2+2);
+      const A=tg.getImageData(0,0,S2,S2).data;      // 정답 획
+      const B=ig.getImageData(0,0,S2,S2).data;      // 손글씨
+      const R=Math.round(S2*0.047);                 // 허용 반경(글자 둘레 이만큼까지만 인정)
+      /* 정답 획을 반경 R 만큼 부풀린 판(허용 영역) */
+      const w=S2, fat=new Uint8Array(w*w), on=new Uint8Array(w*w);
+      for(let y=0;y<w;y++) for(let x=0;x<w;x++)
+        if(A[(y*w+x)*4+3]>90) on[y*w+x]=1;
+      for(let y=0;y<w;y++) for(let x=0;x<w;x++){
+        if(!on[y*w+x]) continue;
+        for(let dy=-R;dy<=R;dy++){ const ny=y+dy; if(ny<0||ny>=w) continue;
+          for(let dx=-R;dx<=R;dx++){ const nx=x+dx; if(nx<0||nx>=w) continue;
+            if(dx*dx+dy*dy<=R*R) fat[ny*w+nx]=1; } }
+      }
+      let need=0, got=0, mine=0, out=0;
+      for(let i=0;i<w*w;i++){
+        const a=on[i], b=B[i*4+3]>90?1:0;
+        if(a){ need++; if(b) got++; }
+        if(b){ mine++; if(!fat[i]) out++; }
+      }
+      return {cov: need? got/need : 0, spill: mine? out/mine : 1,
+              over: need? mine/need : 0, ink: mine};
+    }
+  };
+}
+function judgeTrace(){
+  if(!traceState) return;
+  /* 칸마다 따로 본다. 잘 쓴 칸은 남기고, 아쉬운 칸만 지워서 바로 다시 쓰게 한다. */
+  const bad=[]; let why='';
+  traceState.cells.forEach(c=>{
+    const s=c.score();
+    if(s.ink < TRACE_MININK){ bad.push(c); if(!why) why='아직 다 쓰지 않았어요'; return; }
+    if(s.cov < TRACE_COV){ bad.push(c); if(!why) why='회색 글자를 따라 다시 써 보자'; return; }
+    if(s.spill > TRACE_SPILL){ bad.push(c); if(!why) why='칸 안의 글자를 따라 써 보자'; return; }
+  });
+  if(bad.length){
+    bad.forEach(c=>c.clear());          // 틀린 칸은 곧바로 비워 준다
+    $('trMsg').textContent=why;
+    try{ beep(200,.1); }catch(e){}
+    const b=$('traceOv').querySelector('.trBox');
+    b.classList.remove('quake'); void b.offsetWidth; b.classList.add('quake');
+    return;
+  }
+  try{ beep(1046,.07); setTimeout(()=>beep(1318,.09),80); }catch(e){}
+  $('trMsg').textContent='잘 썼어요!';
+  const cb=traceState.onPass;
+  setTimeout(()=>{ const ov=$('traceOv'); if(ov) ov.remove(); traceState=null; cb(); }, 420);
+}
 function correct(){
   setLock(true);          // 이 문항은 채점 완료 → 추가 확인 불가
   stopQTimer();
@@ -6864,6 +7121,14 @@ function correct(){
   fe.classList.remove('taunt','smirk','panic');
   $('foeLaugh').classList.remove('show','panic');
   renderFoeExpr('idle');
+  /* 고급: 정답을 맞혔으면 따라쓰기까지 해야 공격이 들어간다 */
+  if(traceNeeded()){
+    setMsg('정답! 이제 따라 써 보자.','ok');
+    try{ openTrace(()=>correctHit()); return; }catch(e){}
+  }
+  correctHit();
+}
+function correctHit(){
   beep(880,.08); setTimeout(()=>beep(1320,.1),90);
   battle.done++;
   const ratio=1-battle.done/battle.hits;
@@ -11111,7 +11376,8 @@ function buildShelf(){
         const rs2=storyResume(c.n);
         let info='<b>제'+c.n+'화 · '+c.name+' — 「'+c.sub+'」</b><br>'+c.desc;
         const mk=STORY_MATH[c.n];
-        if(engSubjectOn()) info += '<br><span style="color:#8ad67a">🔤 배우는 것: 알파벳 이름</span>';
+        if(korSubjectOn()) info += '<br><span style="color:#8ad67a">📝 배우는 것: 그림에 알맞은 낱말</span>';
+        else if(engSubjectOn()) info += '<br><span style="color:#8ad67a">🔤 배우는 것: 알파벳 이름</span>';
         else if(mk) info += '<br><span style="color:#8ad67a">📐 배우는 것: '+(MATH_LABEL[mk]||mk)+'</span>';
         if(rs2){
           info += '<br><span style="color:#8ad6f2">📖 읽던 중'+
@@ -11156,6 +11422,11 @@ $('btnChapRestart').onclick=()=>{
 };
 
 /* 영어 모드일 때의 난이도 설명 (수학 문구를 그대로 쓰면 어색하다) */
+const DIFF_SUB_KOR = {
+  baby:  '한두 글자 낱말 · 그림 보고 고르기 · 하트 10개',
+  easy:  '세 글자까지 · 그림 보고 알맞은 낱말 고르기',
+  normal:'모든 낱말 · 그림 보고 알맞은 낱말 고르기'
+};
 const DIFF_SUB_ENG = {
   baby:  'A~F 알파벳 · 3개 중 정답 고르기 · 하트 10개',
   easy:  'A~J 알파벳 · 3개 중 정답 고르기 (3지선다)',
@@ -11165,7 +11436,8 @@ function buildDiffs(){
   const box=$('diffs'); box.innerHTML='';
   ['baby','easy','normal'].forEach(k=>{
     const D=DIFF[k];
-    const sub=(engSubjectOn() && DIFF_SUB_ENG[k]) ? DIFF_SUB_ENG[k] : D.sub;
+    const sub = (korSubjectOn() && DIFF_SUB_KOR[k]) ? DIFF_SUB_KOR[k]
+              : (engSubjectOn() && DIFF_SUB_ENG[k]) ? DIFF_SUB_ENG[k] : D.sub;
     const d=document.createElement('div');
     d.className='diff'+(k===chosenDiff?' sel':'');
     d.innerHTML='<b>'+D.label+'</b><small>'+sub+'</small>';
@@ -11792,24 +12064,30 @@ $('tutPrev').onclick=tutPrev;
 
 /* 첫 화면의 수학/영어 전환 — 모든 화면의 제목과 설명을 함께 바꾼다 */
 function applySubjectUI(){
-  const eng=engSubjectOn();
+  const eng=engSubjectOn(), kor=korSubjectOn();
   const b=$('subjSwitch');
   if(b){
-    b.textContent = eng ? '🔤 영어' : '🔢 수학';
+    b.textContent = kor ? '📝 국어' : (eng ? '🔤 영어' : '🔢 수학');
     b.classList.toggle('eng', eng);
+    b.classList.toggle('kor', kor);
   }
-  const H1 = eng ? 'C.A.R.D. 게임으로<br>즐거운 알파벳 학습'
+  const H1 = kor ? 'C.A.R.D. 게임으로<br>즐거운 낱말 학습'
+           : eng ? 'C.A.R.D. 게임으로<br>즐거운 알파벳 학습'
                  : 'C.A.R.D. 게임으로<br>즐거운 연산학습';
-  const H2 = eng ? '알파벳 이름 익히기 · 글자 카드 겨루기'
+  const H2 = kor ? '그림 보고 낱말 맞히기 · 낱말 카드 겨루기'
+           : eng ? '알파벳 이름 익히기 · 글자 카드 겨루기'
                  : '더하고 뺀다 · 크다 작다 · 숫자 카드 겨루기';
   ['titleH1','homeH1'].forEach(id=>{ const e=$(id); if(e) e.innerHTML=H1; });
   ['titleH2','homeH2'].forEach(id=>{ const e=$(id); if(e) e.textContent=H2; });
-  try{ document.title = eng ? 'C.A.R.D. 게임으로 즐거운 알파벳 학습'
-                            : 'C.A.R.D. 게임으로 즐거운 연산학습'; }catch(e){}
-  /* 난이도 설명도 과목에 맞게 */
+  try{ document.title = kor ? 'C.A.R.D. 게임으로 즐거운 낱말 학습'
+                     : eng ? 'C.A.R.D. 게임으로 즐거운 알파벳 학습'
+                           : 'C.A.R.D. 게임으로 즐거운 연산학습'; }catch(e){}
   try{ if($('diffs') && $('diffs').children.length) buildDiffs(); }catch(e){}
-  /* 책장이 열려 있으면 다시 그려 설명을 갱신한다 */
   try{ if($('shelf') && $('shelf').children.length) buildShelf(); }catch(e){}
+  /* 과목이 바뀌면 순위표·최고기록도 그 과목 것으로 갈아 끼운다 */
+  try{ refreshBest(); }catch(e){}
+  try{ const lb=$('titleLB');
+       if(lb && lb.style.display!=='none' && lb.innerHTML) showBest(); }catch(e){}
 }
 
 loadImages(()=>{
@@ -11821,8 +12099,8 @@ loadImages(()=>{
   showTitleStep('mode');
   applySubjectUI();
   { const sb=$('subjSwitch');
-    if(sb) sb.onclick=()=>{ setSubject(engSubjectOn()?'math':'eng');
-      try{ beep(engSubjectOn()?740:520,.05); }catch(e){} }; }
+    if(sb) sb.onclick=()=>{ setSubject(nextSubject());
+      try{ beep(korSubjectOn()?880:(engSubjectOn()?740:520),.05); }catch(e){} }; }
   { const db=$('dexBtn');
     if(db) db.onclick=()=>{ try{ beep(620,.05); }catch(e){} openDex(); }; }
   $('btnCont').disabled = !anySlotUsed();
