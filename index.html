@@ -190,9 +190,16 @@
   .trBox{background:linear-gradient(#241f33,#171322);border:3px solid var(--gold);
     border-radius:12px;padding:14px;max-width:min(560px,96vw);text-align:center}
   .trTitle{color:var(--gold);font-weight:900;font-size:clamp(15px,4.4vw,20px);margin-bottom:10px}
-  .trCells{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+  .trCells{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;align-items:flex-start}
+  .trCellWrap{display:flex;flex-direction:column;align-items:center;gap:3px}
+  .trCap{font-size:12px;color:#ffe9a8;font-weight:700;letter-spacing:.5px}
   .trCell{width:clamp(74px,21vw,116px);height:clamp(74px,21vw,116px);
     background:#fff;border-radius:6px;touch-action:none;cursor:crosshair}
+  .trPens{margin-top:10px;display:flex;gap:9px;justify-content:center}
+  .trPen{width:34px;height:34px;border-radius:50%;border:3px solid #6a5f8f;cursor:pointer;
+    padding:0;box-shadow:2px 2px 0 #000;transition:transform .08s}
+  .trPen.on{border-color:#fff;transform:scale(1.18);box-shadow:0 0 9px rgba(255,255,255,.6),2px 2px 0 #000}
+  .trPen:active{transform:scale(1.06)}
   .trMsg{margin-top:9px;font-size:12px;color:#c8bfe0;min-height:18px}
   .trBtns{margin-top:10px;display:flex;gap:8px;justify-content:center}
   .trBtns .btn{min-width:110px}
@@ -1454,8 +1461,8 @@ function genStoryMap(rooms, D, shape){
      dare   : 도전방 — 연속 3문제를 맞히면 골드 벼락
    보스방·상점·다리·시작방에는 만들지 않는다. 한 번 겪은 방은 평범해진다.
    ======================================================================= */
-const TRAP_COUNT = 2;
-const TRAP_MOBS  = 12;
+const TRAP_RATE   = 0.14;   // 방마다 함정이 될 확률
+const TRAP_MOBS   = 12;
 const SPRING_COUNT = 1;
 const DARE_COUNT   = 1;
 function assignTraps(M){
@@ -1472,11 +1479,19 @@ function assignTraps(M){
       if(d.gate) continue;                       // 잠긴 문이 걸린 길목도 제외
       cand.push(k);
     }
-    for(let i=cand.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); const t=cand[i]; cand[i]=cand[j]; cand[j]=t; }
+    if(!cand.length) return M;
+    /* 방마다 따로 주사위를 굴린다 → 함정 수가 판마다 달라진다 */
+    const traps=[];
+    cand.forEach(k=>{ if(Math.random()<TRAP_RATE) traps.push(k); });
+    /* 한 판에 적어도 하나는 반드시 나오게 한다 */
+    if(!traps.length) traps.push(cand[Math.floor(Math.random()*cand.length)]);
+    traps.forEach(k=>M[k].trap=1);
+    /* 샘터·도전방은 함정이 아닌 방 중에서 고른다 */
+    const rest=cand.filter(k=>!M[k].trap);
+    for(let i=rest.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); const t=rest[i]; rest[i]=rest[j]; rest[j]=t; }
     let p=0;
-    for(let i=0;i<TRAP_COUNT && p<cand.length;i++)   M[cand[p++]].trap=1;
-    for(let i=0;i<SPRING_COUNT && p<cand.length;i++) M[cand[p++]].spring=1;
-    for(let i=0;i<DARE_COUNT && p<cand.length;i++)   M[cand[p++]].dare=1;
+    for(let i=0;i<SPRING_COUNT && p<rest.length;i++) M[rest[p++]].spring=1;
+    for(let i=0;i<DARE_COUNT && p<rest.length;i++)   M[rest[p++]].dare=1;
   }catch(e){}
   return M;
 }
@@ -3081,6 +3096,43 @@ function gateLocked(def,dir){
   return !S.bosses[g];                             // (구버전 호환)
 }
 function keyCount(){ return S.keys ? Object.keys(S.keys).length : 0; }
+/* ==================== [ADAPT] 실력에 맞춘 탐험 난이도 ====================
+   같은 캐릭터·같은 난이도를 반복하는 학생에게는 지도가 조금씩 더 까다로워진다.
+   ★ 문제(연산·낱말)의 난이도는 절대 건드리지 않는다. 교육과정에 묶여 있기 때문이다.
+     바뀌는 것은 탐험 쪽뿐 — 몹 수, 몹 속도, 움직임(무작위→추적), 장애물 수.
+   등급 0~3 :
+     0 첫 도전            1 한 번 깨 봄
+     2 여러 번 깼거나 빠름  3 아주 익숙(윗 난이도까지 깬 학생이 아래로 내려온 경우 포함)
+   ======================================================================= */
+function adaptTier(){
+  try{
+    if(!S || S.mode!=='race') return 0;          // 이야기 모드는 그대로 둔다
+    const ck=(S.run||S.char)||'chara_b';
+    const d=S.diff||'normal';
+    let t=0;
+    /* 같은 캐릭터·난이도를 몇 번 깼는가 */
+    const recs=getRecords(d, ck)||[];
+    if(recs.length>=1) t=1;
+    if(recs.length>=3) t=2;
+    if(recs.length>=6) t=3;
+    /* 기록이 빠르면 한 단계 더 */
+    if(recs.length){
+      const best=recs[0] && recs[0].time;
+      if(best && best < 180) t=Math.min(3,t+1);   // 3분 이내면 능숙하다고 본다
+    }
+    /* 윗 난이도를 깬 학생이 아래 난이도로 내려온 경우 */
+    const c=clearOf(ck);
+    if(d==='baby'  && (c.e||c.n)) t=Math.max(t,2);
+    if(d==='easy'  && c.n)        t=Math.max(t,2);
+    if(d!=='normal' && c.n && (getRecords('normal',ck)||[]).length>=2) t=3;
+    return Math.max(0, Math.min(3, t));
+  }catch(e){ return 0; }
+}
+/* 등급별 조정값 */
+function adaptMobBonus(){  return [0,1,1,2][adaptTier()]; }        // 방마다 몹 +N
+function adaptSpeedMul(){  return [1, 1.12, 1.25, 1.4][adaptTier()]; }
+function adaptObsBonus(){  return [0,1,2,3][adaptTier()]; }        // 장애물 +N (길이 좁아진다)
+function adaptChaseRate(){ return [0, 0.15, 0.3, 0.45][adaptTier()]; } // 이 확률로 나를 쫓는다
 function buildScreen(key,entry){
   const def=MAP[key]; const R=rng(hash(S.seed+':'+key));
   const solid={}, obs=[];
@@ -3098,6 +3150,8 @@ function buildScreen(key,entry){
   }
   // decorative obstacles
   let tries=0, want=(def.rg==='bridge'||def.rg==='timegate'||def.rg==='dogbridge'||def.tut)?0:Array.isArray(def.ins)?2:(def.boss||def.shop)?3:5;
+  /* 익숙한 학생에게는 장애물을 늘려 길을 좁힌다 (다리·튜토리얼 방은 그대로) */
+  if(want>0 && !def.boss && !def.shop) want += adaptObsBonus();
   while(obs.length<want && tries++<80){
     const tx=2+Math.floor(R()*12), ty=2+Math.floor(R()*7);
     if(CROSS(tx,ty)) continue;
@@ -3114,6 +3168,7 @@ function buildScreen(key,entry){
     if(def.chest) n=2;
     if(isTrap) n=TRAP_MOBS;                      // 12마리
     if(isDare) n=1;                              // 도전방은 한 마리만
+    if(!isTrap && !isDare && !def.boss && n>0) n += adaptMobBonus();   // 익숙하면 몹이 는다
     const doors=[...(ENTRY[key]||[])].map(d=>ENTRY_POS[d]);
     const nearDoor=(x,y)=>doors.some(p=>Math.hypot(x-p.x,y-p.y)<SAFE_R);
     const spots=[];
@@ -3138,11 +3193,13 @@ function buildScreen(key,entry){
       const tx=sp.tx, ty=sp.ty;
       const mobPool=REGION_MOBS[def.rg]||MOBKIND;
       const kind=mobPool[Math.floor(R()*mobPool.length)];
-      const sp2=isTrap?.175:.35;                 // 함정 몹은 절반 속도
+      const sp2=(isTrap?.175:.35) * adaptSpeedMul();   // 익숙하면 더 빠르게 움직인다
       mobs.push({i,x:tx*TS+8,y:PY+ty*TS+8,kind,rg:def.rg,
         tier: def.rg==='castle'?2:1,
         hits: isTrap?1:(isDare?3:2), trap: isTrap?1:0, dare: isDare?1:0,
         name: (isDare?'도전! ':'')+mobName(def.rg,kind),
+        spd: sp2,
+        chase: (!isTrap && R()<adaptChaseRate()) ? 1 : 0,   // 일부는 나를 쫓아온다
         vx:(R()<.5?-1:1)*sp2, vy:(R()<.5?-1:1)*sp2, t:R()*100});
     }
   }
@@ -6079,7 +6136,15 @@ function update(){
   scr.mobs.forEach(m=>{
     if(battle.on) return;
     m.t++;
-    if(m.t%70===0){ const a=Math.random()*Math.PI*2; m.vx=Math.cos(a)*.4; m.vy=Math.sin(a)*.4; }
+    const sp=m.spd||.4;
+    if(m.chase){
+      /* 쫓아오는 몹: 가까우면 나를 향하고, 멀면 평소처럼 어슬렁거린다 */
+      const dx=S.px-m.x, dy=S.py-m.y, dist=Math.hypot(dx,dy)||1;
+      if(dist<86){ m.vx=dx/dist*sp; m.vy=dy/dist*sp; }
+      else if(m.t%70===0){ const a=Math.random()*Math.PI*2; m.vx=Math.cos(a)*sp; m.vy=Math.sin(a)*sp; }
+    } else if(m.t%70===0){
+      const a=Math.random()*Math.PI*2; m.vx=Math.cos(a)*sp; m.vy=Math.sin(a)*sp;
+    }
     if(canMoveMob(m.x+m.vx,m.y)) m.x+=m.vx; else m.vx*=-1;
     if(canMoveMob(m.x,m.y+m.vy)) m.y+=m.vy; else m.vy*=-1;
     if(!safe && Math.abs(m.x-S.px)<11 && Math.abs(m.y-S.py)<11) startBattle(m,false);
@@ -6485,22 +6550,58 @@ const KORQ=[
   ['🥶','춥다','덥다','아프다','v'], ['🥵','덥다','춥다','시원하다','v'], ['🤒','아프다','건강하다','졸리다','v'],
   ['🥱','졸리다','배고프다','신나다','v'], ['😋','맛있다','맵다','짜다','v'], ['🌶️','맵다','달다','시다','v'],
 ];
+/* 국어 고급 — 조사 맞추기. ___ 자리에 알맞은 조사를 고른다.
+   받침이 있으면 은/이/을/과, 없으면 는/가/를/와 로 갈리는 규칙이 핵심이다. */
+const KORJO=[
+  ['사과___ 맛있다.','는','은','이'], ['수박___ 크다.','은','는','가'],
+  ['나___ 학교에 간다.','는','은','를'], ['동생___ 잠을 잔다.','은','는','가'],
+  ['바다___ 넓다.','는','은','이'], ['책상___ 무겁다.','은','는','가'],
+  ['토끼___ 귀엽다.','는','은','가'], ['연필___ 뾰족하다.','은','는','이'],
+  ['바나나___ 노랗다.','는','은','가'], ['가방___ 크다.','은','는','이'],
+  ['강아지___ 뛰어간다.','가','이','은'], ['꽃___ 피었다.','이','가','는'],
+  ['새___ 날아간다.','가','이','를'], ['눈___ 내린다.','이','가','를'],
+  ['나비___ 앉았다.','가','이','은'], ['별___ 반짝인다.','이','가','는'],
+  ['비___ 온다.','가','이','를'], ['공___ 굴러간다.','이','가','는'],
+  ['고양이___ 운다.','가','이','은'], ['물___ 맑다.','이','가','를'],
+  ['밥___ 먹는다.','을','를','이'], ['우유___ 마신다.','를','을','가'],
+  ['책___ 읽는다.','을','를','이'], ['노래___ 부른다.','를','을','이'],
+  ['손___ 씻는다.','을','를','가'], ['공부___ 한다.','를','을','이'],
+  ['그림___ 그린다.','을','를','가'], ['바지___ 입는다.','를','을','이'],
+  ['문___ 연다.','을','를','가'], ['모자___ 쓴다.','를','을','이'],
+  ['학교___ 간다.','에','에서','를'], ['교실___ 공부한다.','에서','에','를'],
+  ['집___ 잔다.','에서','에','를'], ['놀이터___ 논다.','에서','에','를'],
+  ['병원___ 갔다.','에','에서','가'], ['바다___ 헤엄친다.','에서','에','를'],
+  ['의자___ 앉는다.','에','에서','를'], ['시장___ 물건을 산다.','에서','에','는'],
+  ['사과___ 배를 샀다.','와','과','를'], ['연필___ 지우개가 있다.','과','와','는'],
+  ['엄마___ 함께 간다.','와','과','를'], ['동생___ 놀았다.','과','와','를'],
+  ['우유___ 빵을 먹었다.','와','과','는'], ['책___ 공책을 챙겼다.','과','와','를'],
+  ['연필___ 쓴다.','로','으로','를'], ['손___ 잡는다.','으로','로','을'],
+  ['학교___ 간다.','로','으로','에'], ['젓가락___ 먹는다.','으로','로','을'],
+  ['나___ 가고 싶다.','도','만','를'], ['너___ 오너라.','만','도','를'],
+];
 function korPool(){
   const d=(S&&S.diff)||'normal';
-  /* 동사·형용사는 '-다'로 끝나 세 글자가 많다.
-     글자 수만으로 자르면 왕초보에서 아예 안 나오므로, 세 글자 동사까지는 넣어 준다. */
   const isVerb=q=>q[4]==='v';
+  /* 왕초보: 짧은 낱말(동사는 세 글자까지) */
   if(d==='baby') return KORQ.filter(q=>q[1].length<=2 || (isVerb(q) && q[1].length<=3));
-  if(d==='easy') return KORQ.filter(q=>q[1].length<=3 || isVerb(q));
-  return KORQ;                                            // 고급: 전부
+  return KORQ;                    /* 초급: 낱말 전체 */
 }
 /* 국어는 어느 난이도에서나 3지선다(그림을 보고 낱말을 고른다) */
 function genQKor(){
+  const d=(S&&S.diff)||'normal';
+  if(d==='normal') return genQKorJo();          // 고급: 조사 맞추기
   const pool=korPool();
   const q=pool[Math.floor(Math.random()*pool.length)];
   const choices=[q[1], q[2], q[3]];
   for(let i=choices.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));const t=choices[i];choices[i]=choices[j];choices[j]=t;}
   return {mc:true, kor:1, pic:q[0], text:q[0], answer:q[1], choices:choices};
+}
+/* 고급: 문장 속 빈칸에 알맞은 조사를 고른다 (그림 없음 · 쓰기 없음) */
+function genQKorJo(){
+  const q=KORJO[Math.floor(Math.random()*KORJO.length)];
+  const choices=[q[1], q[2], q[3]];
+  for(let i=choices.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));const t=choices[i];choices[i]=choices[j];choices[j]=t;}
+  return {mc:true, kor:1, jo:1, text:q[0], answer:q[1], choices:choices};
 }
 /* ==================== [ENG] 영어 모드 — 알파벳 이름 ====================
    수학 모드와 같은 전투 구조를 그대로 쓴다.
@@ -6828,7 +6929,10 @@ function nextQuestionMC(){
   const eq=$('eq');
   eq.innerHTML=''; battle.slots=[];
   const d=document.createElement('div'); d.textContent=battle.q.text;
-  if(battle.q.kor){                       // 국어: 그림을 크게 보여 준다
+  if(battle.q.kor && battle.q.jo){        // 조사 문제: 문장이므로 읽기 좋은 크기로
+    d.style.fontSize='clamp(20px,5.4vw,30px)';
+    d.style.lineHeight='1.5';
+  } else if(battle.q.kor){                // 낱말 문제: 그림을 크게 보여 준다
     d.style.fontSize='clamp(56px,17vw,96px)';
     d.style.lineHeight='1.15';
   } else {
@@ -6843,7 +6947,7 @@ function nextQuestionMC(){
   });
   const _sk1 = battle.isBoss ? bossSkin(battle.foe.id) : null;
   setMsg((battle.isBoss?(_sk1&&_sk1.still?'자물쇠! ':'보스전! '):'')+
-    (battle.q.kor?'그림에 알맞은 낱말을 골라라!':'정답을 골라라!'),'');
+    (battle.q.jo?'빈칸에 알맞은 말을 골라라!':(battle.q.kor?'그림에 알맞은 낱말을 골라라!':'정답을 골라라!')),'');
   resetFoeForQuestion();
 }
 function pickMC(btn, v){
@@ -6974,9 +7078,44 @@ function checkAnswer(){
      벗어남(spill)  : 아이 획 중 글자 밖으로 나간 비율  → 45% 이하
    ===================================================================== */
 const TRACE_COV=0.55, TRACE_SPILL=0.25, TRACE_MININK=180, TRACE_OVER=3.2;
+/* 따라쓰기 펜 색 — 학생이 고를 수 있다. 고른 색은 기기에 기억해 둔다. */
+const PEN_COLORS=[
+  {key:'red',   name:'빨강', c:'#d02a2a'},
+  {key:'green', name:'초록', c:'#1f8a3a'},
+  {key:'blue',  name:'파랑', c:'#2a3a8a'},
+  {key:'yellow',name:'노랑', c:'#e0a400'},
+  {key:'black', name:'검정', c:'#1a1a20'}
+];
+let PEN='blue';
+try{ const _p=localStorage.getItem('mz_pen'); if(PEN_COLORS.some(x=>x.key===_p)) PEN=_p; }catch(e){}
+function penColor(){ const f=PEN_COLORS.find(x=>x.key===PEN); return f?f.c:'#2a3a8a'; }
+function setPen(k){ PEN=k; try{ localStorage.setItem('mz_pen',k); }catch(e){}
+  const box=$('trPens');
+  if(box) [].forEach.call(box.children, b=>b.classList.toggle('on', b.dataset.k===k));
+}
 let traceState=null;
+/* ㄹ은 획이 촘촘해 아이들이 가장 많이 헤맨다. 그런 글자는 판정을 더 넉넉히 한다.
+     받침이 ㄹ 계열(ㄹ·ㄺ·ㄻ·ㄼ…) → 10%p 여유
+     첫소리가 ㄹ                    → 5%p 여유
+   여유는 '덮음 기준을 낮추고, 벗어남·칠한양 허용을 높이는' 모든 방향에 쓴다. */
+function charLeniency(ch){
+  const c=ch.charCodeAt(0)-0xAC00;
+  if(c<0 || c>11171) return 0;               // 한글 음절이 아니면 여유 없음
+  const cho=Math.floor(c/588), jong=c%28;
+  const RIEUL_JONG=[8,9,10,11,12,13,14,15];  // ㄹ, ㄺ, ㄻ, ㄼ, ㄽ, ㄾ, ㄿ, ㅀ
+  if(RIEUL_JONG.indexOf(jong)>=0) return 0.10;
+  if(cho===5) return 0.05;                   // 첫소리 ㄹ
+  return 0;
+}
 function traceNeeded(){
-  if(!S || S.diff!=='normal') return false;      // 고급에서만
+  if(!S) return false;
+  /* 국어는 '초급(낱말)'에서 따라 쓴다. 고급은 조사 고르기라 쓰기가 없다.
+     수학·영어는 지금까지대로 고급에서 쓴다. */
+  try{
+    if(korSubjectOn())      { if(S.diff!=='easy') return false; }  // 국어: 초급(낱말)만
+    else if(engSubjectOn()) { /* 영어: 모든 난이도에서 쓴다 */ }
+    else if(S.diff!=='normal') return false;                       // 수학: 고급만
+  }catch(e){ if(S.diff!=='normal') return false; }
   const t=traceText();
   return !!t && t.length<=4;                     // 너무 길면 생략
 }
@@ -6984,8 +7123,14 @@ function traceNeeded(){
 function traceText(){
   const q=battle.q; if(!q) return '';
   if(q.kor) return q.answer||'';                 // 국어: 낱말
-  if(q.eng){                                     // 영어: 글자
-    return /^[A-Z]$/.test(q.answer)? q.answer : '';
+  if(q.eng){
+    /* 영어는 어느 방향 문제든 '알파벳'을 따라 쓴다.
+       (글자→이름 문제면 answer 가 한글 이름이므로 text 쪽이 알파벳이다) */
+    if(/^[A-Z]$/.test(q.answer)) return q.answer;
+    if(/^[A-Z]$/.test(q.text))   return q.text;
+    if(q.tok){ let a=''; q.tok.forEach(t=>{ if(t.t==='slot') a+=(t.ans||''); });
+               if(/^[A-Z]+$/.test(a)) return a; }
+    return '';
   }
   if(q.mc) return String(q.answer||'');          // 3지선다: 답
   /* 카드 배치: 빈칸에 들어간 정답들을 이어 붙인다 */
@@ -7000,12 +7145,26 @@ function openTrace(onPass){
   if(ov) ov.remove();
   ov=document.createElement('div'); ov.id='traceOv';
   let cells='';
-  for(let i=0;i<text.length;i++)
-    cells+='<canvas class="trCell" width="192" height="192" data-i="'+i+'"></canvas>';
+  const showName = (()=>{ try{ return engSubjectOn(); }catch(e){ return false; } })();
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    let cap='';
+    if(showName && /^[A-Z]$/.test(ch)){
+      try{ cap='<div class="trCap">'+engNameOf(ch)+'</div>'; }catch(e){}
+    }
+    cells+='<div class="trCellWrap">'+
+             '<canvas class="trCell" width="192" height="192" data-i="'+i+'"></canvas>'+
+             cap+
+           '</div>';
+  }
   ov.innerHTML=
     '<div class="trBox">'+
       '<div class="trTitle">정답을 따라 써 보자</div>'+
       '<div class="trCells">'+cells+'</div>'+
+      '<div class="trPens" id="trPens">'+
+        PEN_COLORS.map(p=>'<button class="trPen'+(p.key===PEN?' on':'')+'" data-k="'+p.key+
+          '" style="background:'+p.c+'" title="'+p.name+'"></button>').join('')+
+      '</div>'+
       '<div class="trMsg" id="trMsg">회색 글자 위를 손가락으로 따라 쓰세요</div>'+
       '<div class="trBtns">'+
         '<button class="btn" id="trClear">지우개</button>'+
@@ -7016,6 +7175,9 @@ function openTrace(onPass){
   traceState={text, onPass, cells:[]};
   [].forEach.call(ov.querySelectorAll('.trCell'), (cv,idx)=>{
     traceState.cells.push(setupTraceCell(cv, text[idx]));
+  });
+  [].forEach.call(ov.querySelectorAll('.trPen'), b=>{
+    b.onclick=()=>{ setPen(b.dataset.k); try{ beep(700,.04); }catch(e){} };
   });
   $('trClear').onclick=()=>{ traceState.cells.forEach(c=>c.clear()); $('trMsg').textContent='다시 따라 써 보자'; };
   $('trOk').onclick=()=>judgeTrace();
@@ -7046,11 +7208,11 @@ function setupTraceCell(cv, ch){
   const start=e=>{ e.preventDefault(); drawing=true; last=pos(e); dot(last); };
   const move=e=>{ if(!drawing) return; e.preventDefault();
     const p=pos(e);
-    ig.strokeStyle='#2a3a8a'; ig.lineWidth=S2*0.075; ig.lineCap='round'; ig.lineJoin='round';
+    ig.strokeStyle=penColor(); ig.lineWidth=S2*0.075; ig.lineCap='round'; ig.lineJoin='round';
     ig.beginPath(); ig.moveTo(last.x,last.y); ig.lineTo(p.x,p.y); ig.stroke();
     last=p; inked++; repaint(); };
   const end=e=>{ drawing=false; };
-  function dot(p){ ig.fillStyle='#2a3a8a'; ig.beginPath(); ig.arc(p.x,p.y,S2*0.037,0,7); ig.fill(); inked++; repaint(); }
+  function dot(p){ ig.fillStyle=penColor(); ig.beginPath(); ig.arc(p.x,p.y,S2*0.037,0,7); ig.fill(); inked++; repaint(); }
   cv.addEventListener('pointerdown',start); cv.addEventListener('pointermove',move);
   cv.addEventListener('pointerup',end);     cv.addEventListener('pointerleave',end);
   cv.addEventListener('touchstart',start,{passive:false});
@@ -11316,10 +11478,14 @@ const BASE_CHARS=['chara_b','chara_g','catcat','robot','musa','ghost'];
 /* 히든 해금 조건
    · hero(용사)     : 기본 6인을 모두 초급 클리어
    · heroine(소녀)  : 기본 6인 + 용사까지, 즉 7인을 모두 고급 클리어(최종 히든) */
+/* 해금 판정에서는 '고급 클리어'가 '초급 클리어'를 포함한다.
+   고급부터 깬 학생이 초급 기록이 없다는 이유로 잠기는 일을 막는다. */
+function clearedEasy(ck){ const c=clearOf(ck); return c.e || c.n; }
+function clearedNormal(ck){ return clearOf(ck).n; }
 function isUnlocked(u){
   if(!u) return true;
-  if(u==='hero')     return BASE_CHARS.every(ck=>clearOf(ck).e);
-  if(u==='heroine')  return BASE_CHARS.every(ck=>clearOf(ck).n) && clearOf('hero').n;
+  if(u==='hero')     return BASE_CHARS.every(clearedEasy);
+  if(u==='heroine')  return BASE_CHARS.every(clearedNormal) && clearedNormal('hero');
   return true;
 }
 function clearRec(){ try{ return JSON.parse(localStorage.getItem('mz_clear'))||{}; }catch(e){ return {}; } }
@@ -11423,9 +11589,9 @@ $('btnChapRestart').onclick=()=>{
 
 /* 영어 모드일 때의 난이도 설명 (수학 문구를 그대로 쓰면 어색하다) */
 const DIFF_SUB_KOR = {
-  baby:  '한두 글자 낱말 · 그림 보고 고르기 · 하트 10개',
-  easy:  '세 글자까지 · 그림 보고 알맞은 낱말 고르기',
-  normal:'모든 낱말 · 그림 보고 알맞은 낱말 고르기'
+  baby:  '짧은 낱말 · 그림 보고 고르기 · 하트 10개',
+  easy:  '모든 낱말 · 그림 보고 알맞은 낱말 고르기',
+  normal:'문장의 빈칸에 알맞은 조사 고르기'
 };
 const DIFF_SUB_ENG = {
   baby:  'A~F 알파벳 · 3개 중 정답 고르기 · 하트 10개',
@@ -11733,6 +11899,10 @@ function launchGame(withCountdown){
     fc.classList.add('on');
     requestAnimationFrame(()=>requestAnimationFrame(()=>{ fc.classList.remove('on'); }));
     toast('출발! 화살표 방향으로만 이동할 수 있다.',2400);
+    try{ const t=adaptTier();
+      if(t>=2) setTimeout(()=>toast(t>=3?'★ 몬스터들이 잔뜩 벼르고 있다!\n(많이 해 본 만큼 더 어려워졌다)'
+                                        :'몬스터들이 조금 더 사나워졌다!',2600), 2600);
+    }catch(e){}
     setTimeout(()=>{ try{ storyEvent('start'); }catch(e){} }, 700);
   };
   if(!withCountdown){ startPlay(); return; }
